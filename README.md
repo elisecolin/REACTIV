@@ -11,7 +11,7 @@ It is available in 3 languages:
 * PYTHON 3
 * JAVASCRIPT for the Google Earth Engine platform
 
-If you use this code in your research projects, please quote the following paper:
+:exclamation: Please if you use this code in your research projects, please quote the following paper:
 
 *Colored visualization of multitemporal data for change detection: issues and methods*
 Elise Colin Koeniguer et al. EUSAR 2018
