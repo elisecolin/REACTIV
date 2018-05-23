@@ -1,0 +1,132 @@
+// When using this code in a publication, please cite
+// Elise Colin Koeniguer et al, 
+// Colored visualization of multitemporal SAR data for change detection: issues and methods
+// EUSAR 2018
+// -------------------------------------------------------------
+ 
+// Parameters: DATES, DESCENDING OR DESCENDING, POLARISATION 
+var str2='2018-02-10';
+var str1='2016-02-01';
+var str='DESCENDING';
+var polar='VV';
+// ------------------------------------------------------------
+
+
+// Optional: Mask for oceans
+var elev = ee.Image('USGS/GMTED2010');
+var ocean = elev.lte(0);
+
+var date2 = ee.Date(str2);
+var date1 = ee.Date(str1); 
+var ds = date2.difference(date1, 'day');
+
+
+
+
+
+
+// Load the Sentinel-1 ImageCollection.
+var sentinel1 = ee.ImageCollection('COPERNICUS/S1_GRD')
+  .filterDate(date1, date2)
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .filter(ee.Filter.eq('orbitProperties_pass', str));
+
+ 
+
+
+
+// This function applies to each image the linear scale
+var linear = function(image) {
+  var imlin = image.expression(
+    '10**(amplitude/20)', {
+      'amplitude': image.select(polar)
+  });
+  return imlin; // conversion in linear, then compute mean: classical mean
+};
+
+var stdLinear = sentinel1.select(polar).map(linear).reduce(ee.Reducer.stdDev());
+var meanLinear = sentinel1.select(polar).map(linear).reduce(ee.Reducer.mean());
+var magic=stdLinear.divide(meanLinear);
+
+
+
+var imagemax = sentinel1.select(polar).max();
+var imax = imagemax.expression(
+    '10 ** (amplitude/20)', {
+      'amplitude': imagemax.select(polar)
+});
+
+
+
+
+// This function affects value of days for pixels where maximum is reached
+var time = function(image) {
+  var days = image.date().difference(date1, 'day').divide(ds); //divide by the period of time observed
+  return image.where(image.lt(imagemax),0).where(image.gte(imagemax),days);
+};
+var days=sentinel1.select(polar).map(time).sum();
+
+
+
+
+
+// Images of Number of images: sizepile
+var unit = function(image) {
+  var imunit = image.multiply(0).add(1);
+  return imunit; // conversion in linear, then compute mean: classical mean
+};
+var sizepile=sentinel1.select(polar).map(unit).sum(); 
+
+
+// Parameter for dynamics
+var mu=0.2286; // Theoretical mean for Rayleigh Nakagam L=4.9
+var stdmu=ee.Image(0.1616);
+var stdmu=stdmu.divide(sizepile.sqrt()); // Theoretical std for Rayleigh Nakagami L=4.9
+var magicnorm=magic.subtract(mu).divide(stdmu.multiply(10)).add(0.25).clamp(0,1);
+
+
+var testH=ee.String(polar)
+var facteurA=(testH.compareTo('VV').eq(0).multiply(1.4).add(testH.compareTo('VH').eq(0).multiply(0.8))); // to recast VV differently from VH
+var rgb=ee.Image.cat(days,magicnorm,imax.pow(facteurA)).hsvToRgb();
+// dynamics are different for VV and VH polarization
+
+var visparams = {min: [0, 0, 0],
+                 max: [1, 1, 1],
+                 gamma: 1};
+Map.addLayer(rgb.where(ocean,0), visparams);
+// If you want to see oceans, remove the restriction .where(ocean,0)
+
+
+
+
+// TEMPORAL LEGEND
+var vis = {min:0, max:1, palette:['FF0000','FF9900','CCFF00','33FF00','00FF66','00FFFF','0066FF','3300FF','CC00FF','FF0099','FF0000']};
+function makeLegend(vis) {
+  var lon = ee.Image.pixelLonLat().select('longitude');
+  var gradient = lon.multiply((vis.max-vis.min)/100.0).add(vis.min);
+  var legendImage = gradient.visualize(vis);
+  var thumb = ui.Thumbnail({
+    image: legendImage, 
+    params: {bbox:'0,0,100,4', dimensions:'285x20'},  
+    style: {padding: '1px', position: 'bottom-center',backgroundColor:'black'}
+  });
+  
+
+  var panel = ui.Panel({
+    widgets: [
+      ui.Label(str1),
+      ui.Label(str),
+      ui.Label(polar),
+      ui.Label(str2),
+    ],
+    layout: ui.Panel.Layout.flow('horizontal'),
+    style: {stretch: 'horizontal',backgroundColor:'black',color:'blue'}
+  });
+  return ui.Panel({style: {backgroundColor: 'black'}}).add(panel).add(thumb);
+
+}
+Map.add(makeLegend(vis));
+
+
