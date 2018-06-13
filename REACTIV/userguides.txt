@@ -2,7 +2,7 @@
 
 PREMABULE POUR PYTHON ET MATLAB
 
-- Les données à représenter sont continues dans un unique répertoire, chaque image est stockées sous un format tiff. (géoréférencés ou non)
+- Les données à représenter sont contenues dans un unique répertoire, chaque image est stockées sous un format tiff. (géoréférencés ou non). IL est possible de stocker sous n'importe quel autre format, en adaptant la lecture en conséquence. 
 - un exemple de tel dossier est donné dans dataset : il s'agit d'images SLC Sentinel remises en correspondance entre elles. Les deux polarisations sont disponibles.
 - Une première étape consiste à définir la liste de ces images à utiliser, et les dates correspondantes. 
 
@@ -36,7 +36,7 @@ Dans la version actuelle, aucun paramètre n'est laissé à l'utilisateur, le co
 ---------------------------------------------------
 SOUS MATLAB 
 
-Il y a deux fichier : 
+Il y a deux fichiers : 
 reactiv_main : permet de configurer les dates et les noms de fichiers, et lance la fonction reactiv_list
 reactiv_list : prend en entrée un certain nombre de paramètres : 
 
