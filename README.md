@@ -18,5 +18,11 @@ It is available in 3 languages:
 *Colored visualization of multitemporal data for change detection: issues and methods*
 Elise Colin Koeniguer et al. EUSAR 2018
 
+or, if you can read french:
+*Visualisation des changements sur séries temporelles radar : méthode REACTIV évaluée à l’échelle mondiale sous Google Earth Engine *
+Elise Colin Koeniguer et al. EUSAR 2018
+
+which received the first price of the french CFPT congress.
+
 Do not hesitate to contact first author.
 
