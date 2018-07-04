@@ -1,6 +1,8 @@
 # REACTIV
 ## Rapid and EAsy Change detection in radar TIme-series by Variation coefficient
 
+![Logo](https://raw.githubusercontent.com/elisekoeniguer/REACTIV/master/REACTIV.png)
+
 
 This code was developed at Onera as part of the **MEDUSA** project
 
