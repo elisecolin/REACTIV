@@ -29,7 +29,7 @@
 #     License pour plus de détails.
 # 
 #     Vous devez avoir reçu une copie de la GNU General Public License en
-#     même temps que Gefolki dans le fichier copying.txt ; si ce n'est pas
+#     même temps que REACTIV dans le fichier copying.txt ; si ce n'est pas
 #     le cas, consultez # <http://www.gnu.org/licenses/gpl.txt
 
 
