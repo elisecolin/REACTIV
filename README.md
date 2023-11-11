@@ -4,7 +4,7 @@
 ![Logo](https://raw.githubusercontent.com/elisekoeniguer/REACTIV/master/REACTIV.png)
 
 
-This code was developed at Onera as part of the **MEDUSA** project
+This code was developed at Onera as part of the **MEDUSA** project in 2018
 
 It is intended to display a stack of SAR images with change detection highlighting.
 
@@ -15,16 +15,7 @@ It is available in 3 languages:
 
 :exclamation: Please if you use this code in your research projects, please quote the following paper:
 
-*Colored visualization of multitemporal data for change detection: issues and methods*
-
-Elise Colin Koeniguer et al. EUSAR 2018
-
-or, if you can read french:
-*Visualisation des changements sur séries temporelles radar : méthode REACTIV évaluée à l’échelle mondiale sous Google Earth Engine*
-
-Elise Colin Koeniguer et al. RFPT, N. 217-218, 2018
-
-which received the first price of the french CFPT congress.
+**Colin Koeniguer, E., & Nicolas, J. M. (2020). Change detection based on the coefficient of variation in SAR time-series of urban areas. Remote Sensing, 12(13), 2089.**
 
 Do not hesitate to contact first author.
 
