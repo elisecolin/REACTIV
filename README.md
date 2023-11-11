@@ -15,7 +15,7 @@ It is available in 3 languages:
 
 :exclamation: Please if you use this code in your research projects, please quote the following paper:
 
-**Colin Koeniguer, E., & Nicolas, J. M. (2020). Change detection based on the coefficient of variation in SAR time-series of urban areas. Remote Sensing, 12(13), 2089.**
+**Colin, E., & Nicolas, J. M. (2020). Change detection based on the coefficient of variation in SAR time-series of urban areas. Remote Sensing, 12(13), 2089.**
 
 Do not hesitate to contact first author.
 
