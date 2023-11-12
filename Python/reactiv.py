@@ -1,5 +1,6 @@
 #     -*- coding: utf-8 -*-
-#     « Copyright (c) 2018, Elise Koeniguer (Onera) » 
+#     « Copyright (c) 2018, Elise Colin (Onera) » 
+#     Updated November 12, 2023
 #     This file is part of REACTIV .
 # 
 #     REACTIV is free software: you can redistribute it and/or modify
@@ -31,119 +32,170 @@
 #     Vous devez avoir reçu une copie de la GNU General Public License en
 #     même temps que REACTIV dans le fichier copying.txt ; si ce n'est pas
 #     le cas, consultez # <http://www.gnu.org/licenses/gpl.txt
-
-
-
-import glob 
-import os
-import datetime
-import numpy as np
-import matplotlib.pyplot as plt
+#
+#     For more explanations:
+#     https://medium.com/@elisecolin/how-to-visualize-changes-in-a-radar-timeline-fb79ef526c1e
 
 from scipy.special import gamma
-from skimage import io
-from skimage import color
 
-#l= glob.glob('/c7/MEDUSE/IDF/Saclay/Sentinel/Pile_From_SNAP/SLC/PileRecalee/DESCENDING/IW1/Recalage-Elise/AmplitudesTif/*VH_amplitude.tif') 
-l= glob.glob('/home/ekoenigu/Documents/AmplitudesTif/*VH_amplitude.tif') 
-N=len(l)
+def Stack2reactiv(Stack, timeaxis=2, L=None):
+    """
+    Compute REACTIV representation from a Stack of Images.
 
-im=io.imread(l[0])
-nx=im.shape[0]
-ny=im.shape[1]
+    Parameters
+    ----------
+    Stack : float ndarray
+        Input stack of images.
+    timeaxis : int, optional
+        Designates the dimension for the temporal axis. Default is timeaxis=2.
+    L : float, optional
+        Equivalent Number of Looks. If data are SLC, then L=1. If not specified,
+        it will be automatically estimated from the data.
 
-threshold=5*im.mean()
+    Returns
+    -------
+    CV : float ndarray, between 0 and 1
+        Coefficient of variation for the temporal axis.
+        Scaled between 0 (theoretical mean value) and 1 (theoretical mean value + theoretical standard deviation).
+    K : float ndarray, between 0 and 1
+        Corresponds to the temporal fraction where maximal amplitude is found during the observation period.
+    Amax : float ndarray - not scaled
+        Corresponds to the image of maximal amplitude values reached during the observation period.
+    """
 
-m1=im;
-m2=im**2;
-Imax=im;
+    # Temporal dimension
+    Nt = np.shape(Stack)[timeaxis]
 
-# Compute the date vector
-datenum=[]
-for i in range(0,N):
-    (filepath, filename) = os.path.split(l[i])
-    year=(int(filename[0:4]))
-    month=(int(filename[4:6]))
-    day=(int(filename[6:8]))
-    d1 = datetime.date(year,month,day)
-    datenum.append(d1.toordinal())
+    # Compute mean and mean of squares
+    M1 = np.mean(Stack, axis=timeaxis)
+    M2 = np.mean(Stack**2, axis=timeaxis)
+
+    # Find maximum amplitude and corresponding fraction of time
+    Amax = np.amax(Stack, axis=timeaxis)
+    Kmax = np.argmax(Stack, axis=timeaxis)
+    K = Kmax / Nt
+
+    # Compute the Coefficient of Variation
+    R = np.sqrt(M2 - M1**2) / M1
+    R[M1 == 0] = 0  # Remove possible Nan output when signal is zero
+    R[M1 < 0] = 0
+
+    # Theoretical estimation of mean and std of the Coefficient of Variation for the given Equivalent Number of Looks
+    if L is None:
+        gam = R.mean()
+        L = ((0.991936 + 0.067646 * gam - 0.098888 * gam**2 - 0.048320 * gam**3) /
+             (0.001224 - 0.034323 * gam + 4.305577 * gam**2 - 1.163498 * gam**3))
+
+    Rmean = np.sqrt((L * gamma(L)**2 / (gamma(L + 0.5)**2)) - 1)  # theoretical mean value
+    num = (L * gamma(L)**4 * (4 * (L**2) * gamma(L)**2 - 4 * L * gamma(L + 1/2)**2 - gamma(L + 1/2)**2))
+    den = (gamma(L + 1/2)**4 * (L * gamma(L)**2 - gamma(L + 1/2)**2))
+    Rstd = 1 / 4 * num / den / np.sqrt(Nt)  # theoretical standard deviation value
+    Rmax = Rmean + Rstd
+
+    # Recast Coefficient of Variation between 0 (mean value) and 1 (max value)
+    CV = (R - Rmean) / (Rmax - Rmean)
+    CV = (CV >= 0) * CV
+    CV = CV * (CV < 1) + (CV >= 1)
+
+    return CV, K, Amax
+
+
+def reactiv_image(CV, K, A, thresh=None):
+    """
+    Create a REACTIV representation as an RGB image.
+    Parameters
+    ----------
+    CV : float ndarray, between 0 and 1
+        Coefficient of variation for the temporal axis. Scaled between 0 (theoretical mean value) and 1 (theoretical mean value + theoretical standard deviation).
+    K : float ndarray, between 0 and 1
+        Corresponds to the temporal fraction where maximal amplitude is found during the observation period.
+    A : float ndarray - not scaled
+        Corresponds to the image of maximal amplitude values reached during the observation period.
+    thresh : float, optional
+        Threshold for amplitude values. If not specified, it is set to the mean plus the standard deviation of the amplitude.
+    Returns
+    -------
+    rgb : ndarray
+        RGB representation of the REACTIV image.
+    """
+    # Ensure amplitude values are positive
+    A = np.abs(A)
+    # Set threshold to mean plus standard deviation if not specified
+    if thresh is None:
+        thresh = np.mean(A) + np.std(A)
+    # Normalize amplitude values between 0 and 1
+    A = A / thresh
+    A = A * (A < 1) + (A >= 1)
+    # Stack CV, K, and normalized A to create an HSV image
+    result = np.dstack((K, CV, A))
+    # Convert HSV to RGB
+    rgb = hsv_to_rgb(result)
+
+    return rgb
+
+def List2reactiv(List,L=None):
+    """ Product output for REACTIV representation from a List of Images
+    Parameters
+    ----------
+    List : List of Image files
+        Example. If all your images are stored in .tif files in Directory, then call
+        List= glob.glob('/home/Directory/*.tif') 
+        It is preferable that .tif files containes Amplitudes (and not Intensities)
+    L : float
+        L is Equivalent Number of Looks. If data are SLC, then L=1. 
+        if you do not specify L, it will be automatically estimated from the data
+    Returns
+    -------
+    CV : float ndarray, between 0 and 1
+        Coefficient of variation for temporal axis. 
+        Casted between 0, theoretical mean value, and 1, theoretical mean value+theoretical standard deviation 
+    K : float ndarray, between 0 and 1
+        Corresponds to the temporal fraction where maximal Amplitude is found during the observation period
+    Amax : float ndarray - not casted
+        Corresponds to the image of maximal amplitude values reached during the observation period
+    """
+    Nt=len(List)# temporal dimension
     
+    im=io.imread(List[0]) # read the first image
+    nx,ny=np.shape(im) 
+    Imax=im;
+
+    # Compute Coefficient of Variation    
+    M1=np.zeros([nx,ny])
+    M2=np.zeros([nx,ny]) 
+    Kmax=np.zeros([nx,ny]) 
+    Amax=np.zeros([nx,ny])
+
+    k=0
+    for count,file in enumerate(List):
+        im=io.imread(file)
+        M1=M1+im
+        M2=M2+im**2
+        k=k+1
+        Kmax=(im>Imax)*count+(im<Imax)*Kmax 
+        Amax=np.maximum(Amax,im)
+    M1=M1/Nt
+    M2=M2/Nt
+    K=Kmax/Nt
+            
+# Compute the Coefficient of variation       
+    R=np.sqrt(M2-M1**2)/M1; 
+    R[M1==0]=0 # Remove possible Nan Oupput when Signal is zero
+    R[M1<0]=0
     
-ds=float(max(datenum)-min(datenum))
+# Theoretical estimation of mean and std of the Coefficient of variation for the given Equivalent Number of Looks     
+    if L is None:
+        gam=R.mean()
+        L= ((0.991936+0.067646*gam-0.098888*gam**2 -0.048320*gam**3)/(0.001224-0.034323*gam+4.305577*gam**2-1.163498*gam**3));
     
-# Compute Coefficient of Variation    
-M1=np.zeros([nx,ny])
-M2=np.zeros([nx,ny]) 
-Kmax=np.zeros([nx,ny]) 
-Imax=np.zeros([nx,ny])
+    Rmean=np.sqrt((L*gamma(L)**2/(gamma(L+0.5)**2))-1); # theretical mean value
+    num=(L*gamma(L)**4.*(4*(L**2)*gamma(L)**2-4*L*gamma(L+1/2)**2-gamma(L+1/2)**2));
+    den=(gamma(L+1/2)**4.*(L*gamma(L)**2-gamma(L+1/2)**2));
+    Rstd=1/4*num/den/np.sqrt(Nt); # theoretical standard deviation value
+    Rmax=Rmean+Rstd
 
-k=0
-for i in l:
-    im=io.imread(i)
-    M1=M1+im
-    M2=M2+im**2
-    Matrix_indicek=(datenum[k]-min(datenum))/ds*np.ones([nx,ny]);
-    k=k+1
-    Kmax=(im>Imax)*Matrix_indicek+(im<Imax)*Kmax 
-    Imax=np.maximum(Imax,im)
-    
-M1=M1/N
-M2=M2/N
-R=np.sqrt(M2-M1**2)/M1
-
-gam=R.mean()
-L= ((0.991936+0.067646*gam-0.098888*gam**2 -0.048320*gam**3)/(0.001224-0.034323*gam+4.305577*gam**2-1.163498*gam**3));
-    
-CV=np.sqrt((L*gamma(L)**2/(gamma(L+0.5)**2))-1); # theretical mean value
-num=(L*gamma(L)**4.*(4*(L**2)*gamma(L)**2-4*L*gamma(L+1/2)**2-gamma(L+1/2)**2));
-den=(gamma(L+1/2)**4.*(L*gamma(L)**2-gamma(L+1/2)**2));
-alpha=1/4*num/den; # theretical standard deviation value
-    
-R=(R-CV)/(alpha/np.sqrt(N))/10.0+0.25;
-R=(R>1)*np.ones([nx,ny])+(R<1)*R;   # Cast Coefficient of Varation R max to 1.
-R=(R>0)*R;
-      
-I=(Imax/threshold); # Cast Intensity to threshold. 
-I=(I<1)*I+(I>1)*np.ones([nx,ny]);
-
-hsv=np.zeros([nx,ny,3])
-hsv[:, :, 0]=Kmax
-hsv[:, :, 1]=R 
-hsv[:, :, 2]=I 
-    
-C=color.hsv2rgb(hsv)
-
-
-gradient = np.linspace(0, 1, 256)
-gradient = np.vstack((gradient, gradient))
-
-from datetime import date
-d1 = date.fromordinal(min(datenum))
-d2 = date.fromordinal(max(datenum))
-str1=str(d1)
-str2=str(d2)
-
-
-from matplotlib import gridspec
-gs = gridspec.GridSpec(2, 1,
-                       width_ratios=[1],
-                       height_ratios=[10, 1]
-                       )
-
-ax1 = plt.subplot(gs[0])
-plt.imshow(C, aspect=3)
-
-ax2 = plt.subplot(gs[1])
-plt.imshow(gradient, aspect=10, cmap='hsv')
-ax2.set_axis_off()
-ax2.set_title(str1+'                        TimeLine                      '+str2)
-
-
-
-
-    
-    
-    
-    
-    
-    
+# recast Coefficient of Variation between 0 (mean value) and 1 (max value)    
+    CV=(R-Rmean)/(Rmax-Rmean)
+    CV=(CV>=0)*CV
+    CV=CV*(CV<1)+(CV>=1);
+    return CV,K,Amax
