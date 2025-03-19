@@ -8,6 +8,10 @@ Clone the Git repository by running the following command in a terminal:
 ```bash
 git clone https://earthengine.googlesource.com/users/elisecolinaa/REACTIV
 ```
+Users with access to the repository can add it to the Code Editor using: 
+```bash
+https://code.earthengine.google.com/?accept_repo=users/elisecolinaa/REACTIV
+```
 
 ## Repository Contents
 The repository contains five main files, each corresponding to a specific implementation of the REACTIV algorithm:
