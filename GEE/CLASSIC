@@ -1,0 +1,381 @@
+/*
+==================================================================================
+📌 REACTIV  Color Composition under Google Earth Engine (GEE)
+==================================================================================
+
+🔹 **Description:**
+This script generates a REACTIV-type color composition 
+
+🔹 **Authors & References:**
+REACTIV Color Composition was developed in Google Earth Engine (GEE) by Elise Colin at ONERA
+
+Please cite this paper if you use this code:
+  📖 Colin, E., & Nicolas, J. M. (2020).  
+  *Change detection based on the coefficient of variation in SAR time-series of urban areas.*  
+  Remote Sensing, 12(13), 2089.  
+
+
+🔹 **User-defined Inputs (to set at the beginning of the script):**
+
+Examples:
+var str1 = '2020-03-01';    // 📅 Start of the observation period (format: 'YY-MM-dd')
+var str2 = '2025-01-01';    // 📅 End of the observation period (format: 'YY-MM-dd')
+
+
+🔹 **Nice geographic places:**
+
+
+/*
+==================================================================================
+*/
+
+var str1='2020-01-01';     // Start of the Observation 'YY-MM-dd'
+var str2='2024-03-31';     // End of the Observation 'YY-MM-dd'
+var croppalet=0.6 ; // Use a number <1 if you do not want the whole HSV palet. 
+                    // croppalet=0.666 will produce Jet or Rainbow palet
+// ----------------------------------------------------------------------
+// COMPUTE COLLECTION
+// ----------------------------------------------------------------------
+
+var startDate = ee.Date(str1);
+var endDate = ee.Date(str2);
+
+
+var ds = endDate.difference(startDate, 'day');
+
+// Centering
+var pos = Map.getCenter();
+
+// Load the Sentinel-1 ImageCollection centered on the location "pos"
+var sentinel1_liste = ee.ImageCollection('COPERNICUS/S1_GRD_FLOAT')
+  .filterDate(startDate, endDate)
+  .filterBounds(pos);
+
+
+var NbOrbit = sentinel1_liste.aggregate_count_distinct('relativeOrbitNumber_start');
+var ListOrbits = sentinel1_liste.aggregate_array('relativeOrbitNumber_start');
+// find orbit numbers and their frequency
+var freq = ee.Dictionary(ee.List(ListOrbits).reduce(ee.Reducer.frequencyHistogram()));
+var array = ee.Array([freq.keys().map(ee.Number.parse), freq.values()]);
+// orbit choice : first, the one with the max frequency
+var frequences = array.slice(0,-1);
+var arraysort = array.sort(frequences);
+var index = ee.Number(NbOrbit).add(-1);
+var orbite = arraysort.get([0,ee.Number(index)]);
+// find images with the chosen orbit
+var sentinel1 = sentinel1_liste.filterMetadata('relativeOrbitNumber_start', 'equals', orbite);
+
+
+// Ascending or Descending
+var modePass = sentinel1.aggregate_array('orbitProperties_pass').distinct();
+// Acquisition Mode 
+var acquisitionMode = sentinel1.aggregate_array('instrumentMode').distinct();
+
+// Polarimetric channels
+var allPolarizations = sentinel1.aggregate_array('transmitterReceiverPolarisation');
+// Intersection of common polarimetric channels for all orbits
+print(allPolarizations)
+var commonPolarizations = allPolarizations.iterate(function(list, intersection) {
+  return ee.List(intersection).removeAll(ee.List(intersection).removeAll(ee.List(list)));
+}, allPolarizations.get(0));  // Initialize with the first list
+var polarList = ee.List(commonPolarizations);
+var NumberOfChannels = polarList.length();
+var polar1 = ee.Algorithms.If(NumberOfChannels.gte(1), polarList.get(0), null);
+var polar2 = ee.Algorithms.If(NumberOfChannels.eq(2), polarList.get(1), null);
+var polar1 = ee.List([polar1]); 
+var polar2 = ee.List([polar2]); 
+
+
+
+// ----------------------------------------------------------------------
+// COLLECTION SUMMARY
+// ----------------------------------------------------------------------
+// Checking and converting lists into strings
+var formattedModePass = ee.String(ee.List(modePass).join(", "));
+var formattedAcquisitionMode = ee.String(ee.List(acquisitionMode).join(", "));
+
+// Check if `commonPolarizations` is empty and format the display
+var formattedPolarizations = ee.Algorithms.If(
+  ee.List(commonPolarizations).size().gt(0),  // Check if the list has elements
+  ee.String(ee.List(commonPolarizations).join(", ")), 
+  ee.String("None")  // If the list is empty, display “None”.
+);
+
+var summary = ee.Dictionary({
+  '🌍 Center Coordinates': pos,
+  '🛰️ Selected Orbit': orbite,
+  '📡 Orbit Mode': formattedModePass,
+  '🛠️ Acquisition Mode': formattedAcquisitionMode,
+  '📊 Number of Polarimetric Channels': NumberOfChannels,
+  '🎭 Common Polarizations in All Images': formattedPolarizations
+});
+
+
+print('📊 Sentinel-1 Summary:', summary);
+
+
+
+
+
+// ----------------------------------------------------------------------
+// REACTIV RGB COMPUTATION
+// ----------------------------------------------------------------------
+
+
+// This function applies to each image the linear scale
+var amplitude = function(image) {
+  var imlin = image.expression(
+    'sqrt(intensity)', {
+      'intensity': image
+  });
+  return imlin; // conversion in linear, then compute mean: classical mean
+};
+
+
+// **2 polarisations**
+var result = ee.Algorithms.If(
+  NumberOfChannels.eq(2),
+  
+  // If NumberOfChannels == 2
+  (function() {
+    var stdLinear1 = sentinel1.select(polar1).map(amplitude).reduce(ee.Reducer.stdDev());
+    var meanLinear1 = sentinel1.select(polar1).map(amplitude).reduce(ee.Reducer.mean());
+    var magic1 = stdLinear1.divide(meanLinear1);
+
+    var stdLinear2 = sentinel1.select(polar2).map(amplitude).reduce(ee.Reducer.stdDev());
+    var meanLinear2 = sentinel1.select(polar2).map(amplitude).reduce(ee.Reducer.mean());
+    var magic2 = stdLinear2.divide(meanLinear2);
+    
+    var imax1 = sentinel1.select(polar1).max();
+    var imax2 = sentinel1.select(polar2).max();
+    var magic = magic1.max(magic2);
+    var imax = imax1.max(imax2);
+
+    // Fonction de calcul du temps pour la première polarisation
+    var time1 = function(image) {
+      var days = image.date().difference(startDate, 'day').divide(ds);
+      return image.where(image.lt(imax1), 0).where(image.gte(imax1), days);
+    };
+    var days1 = sentinel1.select(polar1).map(time1).sum();
+
+    // Fonction de calcul du temps pour la seconde polarisation
+    var time2 = function(image) {
+      var days = image.date().difference(startDate, 'day').divide(ds);
+      return image.where(image.lt(imax2), 0).where(image.gte(imax2), days);
+    };
+    var days2 = sentinel1.select(polar2).map(time2).sum();
+
+    var days = days2.where(magic2.lte(magic1), days1);
+    
+    return {
+      days: days,
+      magic: magic,
+      imax: imax
+    };
+  })(),
+  
+  // If NumberOfChannels == 1
+  (function() {
+    var stdLinear1 = sentinel1.select(polar1).map(amplitude).reduce(ee.Reducer.stdDev());
+    var meanLinear1 = sentinel1.select(polar1).map(amplitude).reduce(ee.Reducer.mean());
+    var magic1 = stdLinear1.divide(meanLinear1);
+    
+    var imax1 = sentinel1.select(polar1).max();
+    var magic = magic1;
+    var imax = imax1;
+
+    // Fonction de calcul du temps pour la seule polarisation
+    var time1 = function(image) {
+      var days = image.date().difference(startDate, 'day').divide(ds);
+      return image.where(image.lt(imax1), 0).where(image.gte(imax1), days);
+    };
+    var days1 = sentinel1.select(polar1).map(time1).sum();
+
+    return {
+      days: days1,
+      magic: magic,
+      imax: imax
+    };
+  })()
+);
+
+// Extraction of final Results
+var days = ee.Image(ee.Dictionary(result).get('days'));
+var magic = ee.Image(ee.Dictionary(result).get('magic'));
+var imax = ee.Image(ee.Dictionary(result).get('imax'));
+
+
+// Images of Number of images: StackSize
+var unit = function(image) {
+  var imunit = image.multiply(0).add(1);
+  return imunit; // conversion in linear, then compute mean: classical mean
+};
+var sizepile=sentinel1.select(polar1).map(unit).sum(); 
+
+
+// Parameter for dynamics
+var mu=0.2286; // Theoretical mean for Rayleigh Nakagam L=4.9
+var stdmu=ee.Image(0.1616);
+var stdmu=stdmu.divide(sizepile.sqrt()); // Theoretical std for Rayleigh Nakagami L=4.9
+var magicnorm=magic.subtract(mu).divide(stdmu.multiply(10)).clamp(0,1);
+
+
+var rgb=ee.Image.cat(days.multiply(croppalet),magicnorm,imax.clamp(0,1)).hsvToRgb();
+Map.setOptions('satellite');
+var visparams = {min: [0, 0, 0],
+                 max: [1, 1, 1],
+                 gamma: 2};
+Map.addLayer(rgb, visparams,'REACTIV Visualization');
+
+
+
+// ----------------------------------------------------------------------
+// DATES 
+// ----------------------------------------------------------------------
+var range = sentinel1.select(polar1).reduceColumns(ee.Reducer.minMax(), ["system:time_start"]);
+var minDate = ee.Date(range.get('min')).format('YYYY-MM-dd');
+var maxDate = ee.Date(range.get('max')).format('YYYY-MM-dd');
+
+// Formatter les dates pour les rendre lisibles
+var okMap2 = sentinel1.select(polar1).map(function(image) {
+  return image.set('date', image.date().format('YYYY-MM-dd'));
+});
+
+// Obtenir une liste unique de dates triées
+var datesList = okMap2.aggregate_array('date').distinct().sort();
+
+// Compter le nombre de dates uniques
+var datesCount = datesList.size();
+
+// Résumé formaté des dates
+var dateSummary = ee.Dictionary({
+  '📅 Date Range': minDate.cat(' → ').cat(maxDate),
+  '📊 Number of Unique Dates': datesCount,
+  '🗓️ List of Dates': datesList
+});
+
+// Affichage compact et élégant
+print('📆 Sentinel-1 Date Summary:', dateSummary);
+
+
+
+
+// ----------------------------------------------------------------------
+// COLORED TIMELINE LEGEND
+// ----------------------------------------------------------------------
+
+
+function fractionToHex(hueFrac) {
+  hueFrac = ee.Number(hueFrac).clamp(0, 1);
+  var hsvImg = ee.Image.cat([hueFrac, 1, 1]).rename(['h', 's', 'v']);
+  var rgbImg = hsvImg.hsvToRgb().multiply(255).round().toInt();
+  var stats = rgbImg.reduceRegion({
+    reducer: ee.Reducer.first(),
+    geometry: ee.Geometry.Point([0, 0]), // Arbitrary point
+    scale: 10,
+    bestEffort: true,
+    maxPixels: 1e6
+  });
+  var r = ee.Number(stats.get('red')).format('%02X');
+  var g = ee.Number(stats.get('green')).format('%02X');
+  var b = ee.Number(stats.get('blue')).format('%02X');
+  return ee.String('#').cat(r).cat(g).cat(b);
+}
+
+
+
+function makeLegend(vis,d1,d2) {
+  var lon = ee.Image.pixelLonLat().select('longitude');
+  var gradient = lon.multiply(1/360.0);
+  var legendImage = gradient.visualize(vis);
+  var thumb = ui.Thumbnail({
+    image: legendImage,
+    params: {bbox:'0,0,360,4', dimensions:'200x20'},
+    style: {padding: '1px', position: 'bottom-center',backgroundColor:'black'}
+    });
+  var panel = ui.Panel({
+  widgets: [
+  ui.Label(d1),
+  ui.Label(d2),
+  ],
+  layout: ui.Panel.Layout.flow('horizontal'),
+  style: {stretch: 'horizontal',backgroundColor:'black',color:'blue'}
+  });
+  return ui.Panel({style: {backgroundColor: 'black'}}).add(panel).add(thumb);
+}
+
+
+var startFrac=ee.Number(0);
+var endFrac=ee.Number(croppalet);
+var numElements = 10; // Number of linear interpolants in the colorbar
+var step = endFrac.subtract(startFrac).divide(ee.Number(numElements - 1));
+
+
+// Création de la liste de fractions
+var fracList = ee.List.sequence(startFrac, endFrac, step);
+// Générer la palette en appliquant fractionToHex à chaque élément de fracList
+var palettehsv = fracList.map(function(hueFrac) {
+  return ee.String(fractionToHex(hueFrac));
+});
+
+var pal = {
+  min: 0,
+  max: 1,
+  palette: palettehsv
+  };
+
+Map.add(makeLegend(pal, str1, str2));
+
+
+
+// ----------------------------------------------------------------------
+// TIME PROFILE PLOT
+// ----------------------------------------------------------------------
+// Create the title label.
+var title = ui.Label('Click to inspect');
+title.style().set('position', 'bottom-center');
+Map.add(title);
+
+// Create a panel to hold the chart.
+var panel = ui.Panel();
+panel.style().set({
+  width: '400px',
+  position: 'bottom-right'
+});
+Map.add(panel);
+
+var selectedBands = ee.List([
+  ee.Algorithms.If(polar1, polar1.get(0), null), 
+  ee.Algorithms.If(polar2, polar2.get(0), null)
+]).removeAll([null]);
+// Convert `selectedBands` to a native JavaScript array
+var selectedBandsJS = selectedBands.getInfo();  
+
+// Register a function to draw a chart when a user clicks on the map.
+Map.onClick(function(coords) {
+  panel.clear();
+  var point = ee.Geometry.Point(coords.lon, coords.lat);
+  print('Coordinates for the plot: ', point);
+  if (selectedBandsJS.length === 0) {
+    if (panel.widgets().length() === 0) { // Prevent multiple display of message
+      panel.add(ui.Label("❌ Error: No valid band for graph display."));
+    }
+    return; // Arrête l'exécution ici
+  }
+  // Dynamic graph creation based on available bands
+  var chart2 = ui.Chart.image.series(sentinel1.select(selectedBandsJS), point, null, 30)
+    .setChartType('ScatterChart')
+    .setOptions({
+      title: 'Temporal Profile',
+      hAxis: { title: 'Acquisition Date' },
+      vAxis: { title: 'Intensity Values (linear)' },
+    });
+
+  panel.add(chart2);
+});
+
+var sentinel1WithDate = sentinel1.map(function(image) {
+  return image.set('date_only', ee.Date(image.get('system:time_start')));
+});
+var countByDay = sentinel1WithDate.aggregate_histogram('date_only');
+print('🗓️ Nombre d’images par jour :', countByDay);
