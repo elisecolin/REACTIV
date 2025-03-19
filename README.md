@@ -4,27 +4,26 @@
 ![Logo](https://raw.githubusercontent.com/elisekoeniguer/REACTIV/master/REACTIV.png)
 
 ### Project Overview
-REACTIV was developed at **Onera** as part of the **MEDUSA** project in 2018. It is designed to visualize stacks of SAR images with change detection highlighting. 
-
+REACTIV was developed at **Onera** as part of the MEDUSA project in 2018. It is designed to visualize stacks of SAR images with change detection highlighting. 
+At the **End of 2024**: Major updates developed as part of the **MUSIC** chaire include:
+  - A **polarimetric version** for multivariate variation coefficient analysis, implemented in both **Python** and **JavaScript**.
+  - A **seasonal version**, as well as **FrozenBackGround** and **NewEvent**, available exclusively on **Google Earth Engine (GEE)**.
+    
 REACTIV exists in multiple programming languages:
 - **MATLAB** ((no longer maintained)
 - **Python 3** (for standalone and scientific analysis)
-- **JavaScript** (for the Google Earth Engine platform)
+- **JavaScript GEE** (for the Google Earth Engine GEE platform)
 - **EOBROWSER**: [Sentinel-1 REACTIV script](https://custom-scripts.sentinel-hub.com/sentinel-1/reactiv/)
 
-### Evolution of REACTIV
-- **2018**: Initial development of the algorithm.
-- **End of 2024**: Major update including:
-  - A **polarimetric version** for multivariate variation coefficient analysis, implemented in both **Python** and **JavaScript**.
-  - A **seasonal version**, as well as **FrozenBackGround** and **NewEvent**, available exclusively on **Google Earth Engine (GEE)**.
 
 ## Installation
-Clone the Git repository by running the following command in a terminal:
+For GEE: clone the Git repository by running the following command in a terminal:
 ```bash
 git clone https://earthengine.googlesource.com/users/elisecolinaa/REACTIV
 ```
+For Python: a Python notebook is available
 
-## Repository Contents
+## VERSIONS
 The repository contains multiple versions of the REACTIV algorithm:
 
 ### 1. CLASSIC
@@ -71,7 +70,7 @@ If you use this code in your research projects, please cite the following paper:
 
 For more details, read this article: [How to visualize changes in a radar timeline](https://medium.com/@elisecolin/how-to-visualize-changes-in-a-radar-timeline-fb79ef526c1e)
 
-Do not hesitate to contact the first author for further inquiries.
+Do not hesitate to contact the first author Elise Colin for further inquiries.
 
 ## Contribution
 Contributions are welcome! Please submit a pull request or open an issue for any suggestions or improvements.
