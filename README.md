@@ -7,7 +7,7 @@
 REACTIV was developed at **Onera** as part of the **MEDUSA** project in 2018. It is designed to visualize stacks of SAR images with change detection highlighting. 
 
 REACTIV exists in multiple programming languages:
-- **MATLAB**
+- **MATLAB** ((no longer maintained)
 - **Python 3** (for standalone and scientific analysis)
 - **JavaScript** (for the Google Earth Engine platform)
 - **EOBROWSER**: [Sentinel-1 REACTIV script](https://custom-scripts.sentinel-hub.com/sentinel-1/reactiv/)
