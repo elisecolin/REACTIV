@@ -1,0 +1,248 @@
+/*
+==================================================================================
+📌 FROZEN BACKGROUND DETECTION using a Sliding Window on Sentinel-1 Time Series
+==================================================================================
+
+Description:
+- This script calculates a frozen background on a Sentinel-1 time series  
+
+- A frozen background is an average image of a scene in which 
+anomalies identified using the coefficient of variation have been removed
+
+- The script processes the two polarisations (VV and VH) separately.
+
+- In this implementation, instead of using an iterative approach, it directly 
+operates on the sorted list of pixel values to calculate cumulative coefficients
+of variation (CV) and determines the number of values that remain below the threshold
+
+
+Author: Elise Colin (Onera) from:
+
+Reference:
+Taillade, T.; Thirion-Lefevre, L.; Guinvarc’h, R. 
+Detecting Ephemeral Objects in SAR Time-Series Using Frozen Background-Based 
+Change Detection. Remote Sens. 2020, 12, 1720. https://doi.org/10.3390/rs12111720 
+
+🔹 **Insteresting geographic places:**
+-5.80061 15.83701  15      M'bara Camp
+
+==================================================================================
+*/
+
+// =========================================================================
+// 1. User parameters 
+// =========================================================================
+var str2='2023-07-01';     // End of the Observation 'YY-MM-dd'
+var durationMonths = 6;    // Duration of the time series ( in month)
+
+
+var mu_threshold = 0.2286;
+
+// -------------------------------------------------------------------------
+// COMPUTE COLLECTION
+// -------------------------------------------------------------------------
+var endDate = ee.Date(str2);
+var startDate = endDate.advance(-durationMonths, 'month'); 
+// Study area: centre of map
+var geometry = Map.getCenter();
+
+// =========================================================================
+// 2. Loading and initial filtering of the Sentinel-1 collection
+// =========================================================================
+var s1Collection = ee.ImageCollection('COPERNICUS/S1_GRD_FLOAT')
+  .filterBounds(geometry);
+
+var NbOrbit = s1Collection.aggregate_count_distinct('relativeOrbitNumber_start');
+var ListOrbits = s1Collection.aggregate_array('relativeOrbitNumber_start');
+// find orbit numbers and their frequency
+var freq = ee.Dictionary(ee.List(ListOrbits).reduce(ee.Reducer.frequencyHistogram()));
+var array = ee.Array([freq.keys().map(ee.Number.parse), freq.values()]);
+// orbit choice : first, the one with the max frequency
+var frequences = array.slice(0,-1);
+var arraysort = array.sort(frequences);
+var index = ee.Number(NbOrbit).add(-1);
+var orbite = arraysort.get([0,ee.Number(index)]);
+// find images with the chosen orbit
+s1Collection = s1Collection.filterMetadata('relativeOrbitNumber_start', 'equals', orbite);
+
+
+
+// Sort Sentinel-1 images by ascending date
+var sortedCollection = s1Collection.sort('system:time_start', true);
+// Find the last date before endDate
+var beforeEnd = sortedCollection.filter(ee.Filter.date(startDate, endDate))
+                                .sort('system:time_start', false)
+                                .first()
+                                .get('system:time_start');
+var realEndDate = ee.Date(beforeEnd);
+// Find the first date after realEndDate
+var afterEnd = sortedCollection.filter(ee.Filter.date(endDate, endDate.advance(1, 'month')))
+                               .sort('system:time_start', true)
+                               .first()
+                               .get('system:time_start');
+var shiftedEndDate = ee.Date(afterEnd);
+
+
+var analysisSummary = ee.Dictionary({
+  '📅 Target End Date': endDate.format('YYYY-MM-dd'),
+  '✅ Actual Last Available Date': realEndDate.format('YYYY-MM-dd'),
+  '📷 Date of Analyzed Image': shiftedEndDate.format('YYYY-MM-dd')
+});
+print('🛰️ Temporal Analysis Summary', analysisSummary);
+
+
+
+// Filter Sentinel-1 collections with the actual dates found
+var s1_1 = s1Collection.filterDate(startDate, realEndDate.advance(1, 'day'));  // Série principale
+var s1_2 = s1Collection.filterDate(shiftedEndDate, shiftedEndDate.advance(1, 'day'));  // Série décalée
+
+var s1Collection = s1Collection.filterDate(startDate, shiftedEndDate.advance(1, 'day')) // Série principale
+
+
+//s1Collection=s1_1
+var Inew = s1_2.first();
+var Inew_linearVV = Inew.select('VV').sqrt().rename('VV');
+var Inew_linearVH = Inew.select('VH').sqrt().rename('VH');
+
+// Convert Intensity float to amplitude: sqrt(intensity)
+function convertToAmplitude(collection, polar) {
+  return collection.select(polar).map(function(img) {
+    return img.expression('sqrt(band)', { 'band': img.select(polar) })
+              .rename(polar);
+  });
+}
+
+// For comparison, compute the simple mean for each polarization
+var meanVV = convertToAmplitude(s1_1, 'VV').mean().rename('meanVV');
+var meanVH = convertToAmplitude(s1_1, 'VH').mean().rename('meanVH');
+
+
+// =========================================================================
+// 3. Frozen Background
+// =========================================================================
+
+/**
+ * computeFrozenBackground computes the frozen background image for a given image collection,
+ * threshold, and polarization. It first converts the input collection to amplitude and then
+ * creates a per-pixel sorted array of values. Instead of using an iterative approach, it
+ * directly operates on the sorted list of pixel values to calculate cumulative coefficients
+ * of variation (CV) and determines the number of values that remain below the threshold.
+ * The frozen background is then derived as the mean of these retained amplitude values.
+ */
+
+
+
+// Function to compute the frozen background for a given collection, threshold, and polarization.
+function computeFrozenBackground(collection, mu_threshold, polar) {
+  var amplitudeCollection = convertToAmplitude(collection, polar); // Convert the collection to amplitude 
+  // Step 1: Convert the collection to a per-pixel sorted array
+  var pixelValuesArray = amplitudeCollection.toArray().arraySort();
+  // Create a constant image of indices (1D)
+  var imageIndices = ee.Image.constant(ee.List.sequence(0, amplitudeCollection.size().subtract(1)))
+                          .toArray(0).toInt();
+  // Expand the indices to 2D (e.g., shape [N, 1])
+  var imageIndices2D = imageIndices.arrayRepeat(1, 1);
+  
+  // Step 2: Compute the cumulative coefficient of variation (CV) per pixel
+  var indices = ee.List.sequence(1, amplitudeCollection.size());
+  var cumulativeCV = indices.map(function(i) {
+    i = ee.Number(i);
+    // Extract a sub-array with the first i elements
+    var subArray = pixelValuesArray.arraySlice(0, 0, i.toInt());
+    // Compute the mean and standard deviation of the sub-array
+    var mean = subArray.arrayReduce(ee.Reducer.mean(), [0]);
+    var stdDev = subArray.arrayReduce(ee.Reducer.stdDev(), [0]);
+    var cv = stdDev.divide(mean);
+    
+    // Extract the scalar value from the 2D array at position [0, 0]
+    var cvScalar = cv.arrayGet([0, 0]);
+    
+    // Rename the band using the current index (force integer conversion for a valid band name)
+    var newName = ee.String('cv_').cat(i.toInt().format());
+    return cvScalar.rename(newName);
+  });
+  // Convert the list of CV images into an ImageCollection then into a multi-band image
+  var cumulativeCVImage = ee.ImageCollection.fromImages(cumulativeCV).toBands();
+  // Create a boolean image: true where CV is less than the threshold
+  var belowThreshold = cumulativeCVImage.lt(mu_threshold);
+  
+  // Step 3: Count the number of iterations (bands) where CV is below the threshold
+  var countBelow = belowThreshold.toInt().reduce(ee.Reducer.sum()).rename('countBelow');
+  var countBelowInt = countBelow.toInt();
+  
+  // Create a mask: keep indices strictly less than countBelowInt
+  var keepMask = imageIndices2D.lt(countBelowInt);
+  
+  // Apply the mask to the pixel values array
+  var maskedPixelValuesArray = pixelValuesArray.arrayMask(keepMask);
+  
+  // Compute the sum of the masked amplitudes along axis 0 and extract the scalar value
+  var sumAmplitude = maskedPixelValuesArray.arrayReduce(ee.Reducer.sum(), [0])
+                           .arrayGet([0, 0]);
+  
+  // Compute the frozen background as the mean of the retained amplitudes
+  var frozenBackground = sumAmplitude.divide(countBelowInt)
+                                       .rename('frozenBackground');
+  
+  return frozenBackground;
+}
+
+
+// Compute the frozen background for both polarizations
+var frozenBackgroundVV = computeFrozenBackground(s1_1, mu_threshold, 'VV');
+var frozenBackgroundVH = computeFrozenBackground(s1_1, mu_threshold, 'VH');
+
+
+// =========================================================================
+// 4. Display Results
+// =========================================================================
+
+Map.setOptions('satellite');
+var visParams = {min: [0, 0, 0], max: [1, 1, 1], gamma: 1};
+
+// Display results on the map
+Map.addLayer(frozenBackgroundVV, {min: 0, max: 1}, 'Frozen Background VV');
+Map.addLayer(meanVV, {min: 0, max: 1}, 'Mean VV');
+Map.addLayer(frozenBackgroundVH, {min: 0, max: 1}, 'Frozen Background VH');
+Map.addLayer(meanVH, {min: 0, max: 1}, 'Mean VH');
+
+var rgbvv=ee.Image.cat(Inew_linearVV.max(frozenBackgroundVV),frozenBackgroundVV,frozenBackgroundVV)
+var rgbvh=ee.Image.cat(frozenBackgroundVH.multiply(3),frozenBackgroundVH.multiply(3),Inew_linearVH.max(frozenBackgroundVH).multiply(3))
+
+var FBRpolar=ee.Image.cat(frozenBackgroundVV,frozenBackgroundVH.multiply(3),frozenBackgroundVH.divide(frozenBackgroundVV))
+
+Map.addLayer(FBRpolar, visParams,'FBG in polarimetric colors');
+
+//Map.addLayer(rgbvv, visParams,'Detection from a FBG in VV');
+//Map.addLayer(rgbvh, visParams,'Detection from a FBG in VH');
+
+
+// =========================================================================
+// 5. Panel for time series PLOT 
+// =========================================================================
+
+
+// Create a panel to hold the chart.
+var panel = ui.Panel();
+panel.style().set({
+  width: '400px',
+  position: 'bottom-right'
+});
+Map.add(panel);
+
+// Register a function to draw a chart when a user clicks on the map.
+Map.onClick(function(coords) {
+  panel.clear();
+  var point = ee.Geometry.Point(coords.lon, coords.lat);
+  var chart2=ui.Chart.image.series(s1Collection.select('VV','VH'), point, null, 30)
+  .setChartType('ScatterChart')
+      .setOptions({
+      title: 'temporal profile',
+      hAxis: {title: 'Acquisition Date'},
+      vAxis: {title: 'Intensity Values (dB)'},
+      });
+  panel.add(chart2);
+});
+
+
+
