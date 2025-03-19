@@ -1,42 +1,39 @@
-#     -*- coding: utf-8 -*-
-#     « Copyright (c) 2018, Elise Colin (Onera) » 
-#     Updated November 12, 2023
-#     This file is part of REACTIV .
-# 
-#     REACTIV is free software: you can redistribute it and/or modify
-#     it under the terms of the GNU General Public License as published by
-#     the Free Software Foundation, either version 3 of the License, or
-#     (at your option) any later version.
-# 
-#     REACTIV is distributed in the hope that it will be useful,
-#     but WITHOUT ANY WARRANTY; without even the implied warranty of
-#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#     GNU General Public License for more details.
-# 
-#     You should have received a copy of the GNU General Public License
-#     along with REACTIV in the file copying.txt.  
-#     If not, see <http://www.gnu.org/licenses/gpl.txt>.
-#
-# ------------------------------------------------------------------------
-#
-#     REACTIV est un logiciel libre ; vous pouvez le redistribuer ou le
-#     modifier suivant les termes de la GNU General Public License telle
-#     que publiée par la Free Software Foundation ; soit la version 3 de la
-#     licence, soit (à votre gré) toute version ultérieure.
-# 
-#     REACTIV est distribué dans l'espoir qu'il sera utile, mais SANS
-#     AUCUNE GARANTIE ; sans même la garantie tacite de QUALITÉ MARCHANDE
-#     ou d'ADÉQUATION à UN BUT PARTICULIER. Consultez la GNU General Public
-#     License pour plus de détails.
-# 
-#     Vous devez avoir reçu une copie de la GNU General Public License en
-#     même temps que REACTIV dans le fichier copying.txt ; si ce n'est pas
-#     le cas, consultez # <http://www.gnu.org/licenses/gpl.txt
-#
-#     For more explanations:
-#     https://medium.com/@elisecolin/how-to-visualize-changes-in-a-radar-timeline-fb79ef526c1e
-
 from scipy.special import gamma
+import numpy as np
+import matplotlib.pylab as plt
+from tqdm import tqdm
+from matplotlib import pyplot
+from matplotlib.colors import hsv_to_rgb
+
+
+def Stack2SingleCV(Stack, timeaxis=2):
+    """
+    Compute single coefficient of variation from a Stack of Images.
+
+    Parameters
+    ----------
+    Stack : float ndarray
+        Input stack of images.
+    timeaxis : int, optional
+        Designates the dimension for the temporal axis. Default is timeaxis=2.
+    Returns
+    -------
+    R : float ndarray, between 0 and +infty
+        Coefficient of variation for the temporal axis - Not scaled        
+    """
+    # Temporal dimension
+    Nt = np.shape(Stack)[timeaxis]
+    # Compute mean and mean of squares
+    M1 = np.mean(Stack, axis=timeaxis)
+    M2 = np.mean(Stack**2, axis=timeaxis)
+    # Compute the Coefficient of Variation
+    R = np.sqrt(M2 - M1**2) / M1
+    R[M1 == 0] = 0  # Remove possible Nan output when signal is zero
+    R[M1 < 0] = 0
+
+    return R
+
+
 
 def Stack2reactiv(Stack, timeaxis=2, L=None):
     """
@@ -133,6 +130,8 @@ def reactiv_image(CV, K, A, thresh=None):
 
     return rgb
 
+
+
 def List2reactiv(List,L=None):
     """ Product output for REACTIV representation from a List of Images
     Parameters
@@ -199,3 +198,249 @@ def List2reactiv(List,L=None):
     CV=(CV>=0)*CV
     CV=CV*(CV<1)+(CV>=1);
     return CV,K,Amax
+
+
+
+
+def fusion2polar4reactiv(CV1, K1, A1, CV2, K2, A2):
+    """
+    Merge two sets of REACTIV parameters.
+
+    Args:
+        CV1 (numpy.ndarray): coefficient of variation matrix for the first polarimetric channel.
+        K1 (numpy.ndarray): Matrix of temporal fraction for the first polarimetric channel .
+        A1 (numpy.ndarray): Maximal Amplitude reached for the first polarimetric channel.
+        CV2 (numpy.ndarray): coefficient of variation matrix for the second polarimetric channel.
+        K2 (numpy.ndarray): Matrix of temporal fraction for the second polarimetric channel .
+        A2 (numpy.ndarray): Maximal Amplitude reached for the second polarimetric channel.
+
+    Returns:
+        tuple: A tuple containing three matrices representing the merged reactiv variables.
+            - CV (numpy.ndarray): Merged coefficient of variation values.
+            - K (numpy.ndarray): Merged matrix of time fractions.
+            - A (numpy.ndarray): Merged amplitude values.
+    """
+    # Compare matrices CV1 and CV2
+    condition = CV1 > CV2
+    # Select elements from K1 where CV1 > CV2, and from K2 otherwise
+    K = np.where(condition, K1, K2)
+    # Select elements with the maximum value between CV1 and CV2
+    CV = np.maximum(CV1, CV2)
+    # Select elements with the maximum value between A1 and A2
+    A = A1+A2
+
+    return CV, K, A
+
+
+def CV_fromListofImages(S):
+    """
+    Calculate the mean vector and covariance matrix from a list of time series matrices.
+    Inputs:
+    - S: A list of matrices representing the time series matrices of different intensity components. 
+         Each matrix has dimensions (nt, nx, ny), where nt is the number of time points,
+         nx and ny are spatial dimensions. The list can contain p elements, where p is any number.
+         Examples: p=2 for |Ex|,|Ey|. p=4 for Sony polarimetric Intensities. 
+    Outputs:
+    - CVRR: Coefficient of variation RR matrix, nd array of dimensions (nx,ny)
+    - CVgv: Coefficient of variatioe gv matrix, nd array of dimensions (nx,ny)
+    - CVVN: Coefficient of variatio VN matrix, nd array of dimensions (nx,ny)
+    - CVAZ: Coefficient of variatio AZ matrix, nd array of dimensions (nx,ny)
+    """
+    p = len(S)  # Number of elements
+    nx, ny = S[0].shape[1], S[0].shape[2]  # Spatial dimensions
+
+    # Calculate mean for each matrix in S
+    S_means = [np.mean(Si, axis=0) for Si in S]
+
+    # Initialize covariance matrix C
+    C = np.zeros((p, p, nx, ny))
+
+    # Calculate covariance matrix
+    for i in range(p):
+        for j in range(i, p):  # Use symmetry, compute only for j >= i
+            m = (S[i] - S_means[i]) * (S[j] - S_means[j])
+            m_mean = np.mean(m, axis=0)
+            C[i, j, :, :] = m_mean
+            if i != j:
+                C[j, i, :, :] = m_mean  # Use symmetry to fill in the lower half
+                
+    #for i in range(p):
+    TraceC = np.zeros((nx, ny))
+    for i in range(p):
+            TraceC = TraceC + C[i, i, :, :]
+
+    # Calculate the mean vector
+    MU = np.array(S_means)
+    NormU2 = np.sum(MU**2,axis=0)
+    
+    Cp = np.transpose(C, (2, 3, 0, 1)) # Cp has dimensions (nx,ny,p,p)
+    MU_reshaped = MU.transpose(1, 2, 0) # MU_reshaped has dimensions (nx,ny,p)
+
+    
+    # Compute CVAZ - PRODUCT MU C MU 
+    MU_transformed = np.repeat(MU_reshaped[:, :, :, np.newaxis], p, axis=-1) # MU_transformed has dimensions (nx,ny,p,p)
+    Cmu = np.matmul(Cp,MU_transformed)  # matrix multiplication by list over the nx,ny elements
+    Cmu = Cmu[:,:,:,0]  # Only vector result is needed
+    muCmu=(np.sum(Cmu*MU_reshaped,axis=2))
+    CVAZ=np.sqrt(muCmu)/NormU2  
+
+    # Compute CVRR - DETERMINANT
+    C_2d = Cp.reshape(-1, p, p)
+    # Calculate the determinant for each (p, p) sub-matrix along the first axis
+    determinants = np.linalg.det(C_2d)
+    # Reshape the determinant matrix to (nx, ny)
+    determinant_matrix = determinants.reshape(nx,ny)    
+    
+    CVRR = np.sqrt(determinant_matrix**(1/p) / NormU2)
+    
+
+    # Compute CVVN - Inverse C 
+    Cinv=np.linalg.inv(C_2d)
+    Cinv_p=Cinv.reshape(nx,ny,p,p)
+    Cinvmu = np.matmul(Cinv_p,MU_transformed)  # matrix multiplication by list over the nx,ny elements
+    Cinvmu = Cinvmu[:,:,:,0]  # Only vector result is needed
+    muCinvmu=(np.sum(Cinvmu*MU_reshaped,axis=2))
+    CVVN=1/np.sqrt(muCinvmu)
+    
+    # Compute CVgv - trace C 
+    
+    CVgv = np.sqrt(TraceC/NormU2)
+    
+    return CVRR, CVgv, CVVN, CVAZ  
+
+
+def eigenimages(series):
+    """
+    Calculate pixel-wise covariance matrices and eigenvalues for a series of temporal image data to compute
+    Inputs:
+    - series: A list of p elements, where each element is a nd numpy arrays of shape (Nt, nx, ny),
+              representing a time series of images.
+    Outputs:
+    - eigenimages: A list of p numpy arrays of shape (nx, ny), where each array represents an
+                   image constructed from the eigenvalues corresponding to one of the p dimensions.
+    """
+    # Unpack the dimensions
+    p, Nt, nx, ny = len(series), series[0].shape[0], series[0].shape[1], series[0].shape[2]
+    # Initialize an array to hold the eigenvalues for each pixel
+    eigenvalues_per_pixel = np.zeros((nx, ny, p))
+    # Iterate over each pixel position
+    for x in tqdm(range(nx)):
+        for y in range(ny):
+            # Extract the pixel series for this location across all p series and Nt times
+            pixel_series = np.array([[series[i][t, x, y] for t in range(Nt)] for i in range(p)])
+            # Calculate the covariance matrix for this pixel series
+            cov_matrix = np.cov(pixel_series)*(Nt-1)/Nt
+            mu=np.mean(pixel_series,axis=1)
+            # Calculate the eigenvalues and store them
+            eigenvalues, _ = np.linalg.eig(cov_matrix)
+            eigenvalues_per_pixel[x, y,:] = eigenvalues
+    # Construct the eigenimages from the eigenvalues
+    eigenimages = [eigenvalues_per_pixel[:, :, i] for i in range(p)]
+    return eigenimages
+
+
+
+def CV_Generalized_Limits(series):
+    """
+    Calculate the limits Q-> infinity or - infinity, according to sqrt(lambda_min)/mu,  sqrt(lambda_max)/mu
+    Inputs:
+    - series: A list of p elements, where each element is a nd numpy arrays of shape (Nt, nx, ny),
+              representing a time series of images.
+    Outputs:
+    - limitmin_per_pixel,limitmax_per_pixel: Two numpy arrays of shape (nx, ny), where each array corresponds to the limits 
+        of Generalized CV.
+    """
+    # Unpack the dimensions
+    p, Nt, nx, ny = len(series), series[0].shape[0], series[0].shape[1], series[0].shape[2]
+    limitmin_per_pixel= np.zeros((nx, ny))
+    limitmax_per_pixel= np.zeros((nx, ny))
+    # Iterate over each pixel position
+    for x in tqdm(range(nx)):
+        for y in range(ny):
+            # Extract the pixel series for this location across all p series and Nt times
+            pixel_series = np.array([[series[i][t, x, y] for t in range(Nt)] for i in range(p)])
+            # Calculate the covariance matrix for this pixel series
+            cov_matrix = np.cov(pixel_series)*(Nt-1)/Nt
+            mu=np.mean(pixel_series,axis=1)
+            normMU=np.linalg.norm(mu)
+            # Calculate the eigenvalues and store them
+            eigenvalues, _ = np.linalg.eig(cov_matrix)
+            limitmin_per_pixel[x, y] = np.sqrt(np.min(eigenvalues))/normMU
+            limitmax_per_pixel[x, y] = np.sqrt(np.max(eigenvalues))/normMU
+    # Construct the eigenimages from the eigenvalues
+    # eigenimages = [eigenvalues_per_pixel[:, :, i] for i in range(p)]
+    return limitmin_per_pixel,limitmax_per_pixel
+
+
+
+def CV_Generalized_equally(S,Q):
+    """
+    Contrast definition based on the Generalized Equally Weighted Mean at order Q.
+    """
+    # Unpack the dimensions
+    p, Nt, nx, ny = len(S), S[0].shape[0], S[0].shape[1], S[0].shape[2]
+    # Initialize an array to hold the eigenvalues for each pixel
+    CV = np.zeros((nx, ny))
+    # Iterate over each pixel position
+    for x in tqdm(range(nx)):
+        for y in range(ny):
+            # Extract the pixel series for this location across all p series and Nt times
+            pixel_series = np.array([[S[i][t, x, y] for t in range(Nt)] for i in range(p)])
+            # Calculate the covariance matrix for this pixel series
+            C = np.cov(pixel_series)*(Nt-1)/Nt
+            CQ=np.linalg.matrix_power(C, Q) # COvariance Matrix power Q
+            mu=np.mean(pixel_series,axis=1)
+            normMU=np.linalg.norm(mu)
+            CV[x,y]=np.sqrt((1/p*np.trace(CQ))**(1/Q))/normMU
+    return CV
+
+def CV_Generalized_Non_equally(S,Q):
+    """
+    Contrast definition based on the Generalized Non Equally Weighted Mean at order Q, Q<>0.
+    """
+    # Unpack the dimensions
+    p, Nt, nx, ny = len(S), S[0].shape[0], S[0].shape[1], S[0].shape[2]
+    # Initialize an array to hold the eigenvalues for each pixel
+    CV = np.zeros((nx, ny))
+    # Iterate over each pixel position
+    for x in tqdm(range(nx)):
+        for y in range(ny):
+            # Extract the pixel series for this location across all p series and Nt times
+            pixel_series = np.array([[S[i][t, x, y] for t in range(Nt)] for i in range(p)])
+            # Calculate the covariance matrix for this pixel series
+            C = np.cov(pixel_series)*(Nt-1)/Nt
+            mu=np.mean(pixel_series,axis=1)
+            normMU=np.linalg.norm(mu)
+            
+            C_q = np.linalg.matrix_power(C, Q)
+            intermediate_result = np.dot(mu.T, C_q)
+            result = np.dot(intermediate_result, mu)
+            
+            CV[x,y]=np.sqrt((result)**(1/Q))/normMU**(1+1/Q)
+    return CV
+
+def CV_Generalized_Non_equally_Zero(S):
+    """
+    Contrast definition based on the Generalized Non Equally Weighted Mean at order 0.
+    """
+    # Unpack the dimensions
+    p, Nt, nx, ny = len(S), S[0].shape[0], S[0].shape[1], S[0].shape[2]
+    # Initialize an array to hold the eigenvalues for each pixel
+    CV = np.zeros((nx, ny))
+    # Iterate over each pixel position
+    for x in tqdm(range(nx)):
+        for y in range(ny):
+            # Extract the pixel series for this location across all p series and Nt times
+            pixel_series = np.array([[S[i][t, x, y] for t in range(Nt)] for i in range(p)])
+            # Calculate the covariance matrix for this pixel series
+            C = np.cov(pixel_series)*(Nt-1)/Nt
+            mu=np.mean(pixel_series,axis=1)
+            normMU=np.linalg.norm(mu)
+            eigenvalues,U= np.linalg.eig(C)
+            muprime=np.dot(U.T,mu)
+            result=(np.prod(eigenvalues**(np.abs(muprime)**2)))**(1/normMU**2)
+            CV[x,y]=np.sqrt(result)/normMU
+    return CV
+
+
+
