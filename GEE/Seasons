@@ -1,0 +1,529 @@
+/*
+==================================================================================
+📌 REACTIV Seasonal Color Composition under Google Earth Engine (GEE)
+==================================================================================
+
+🔹 **Description:**
+This script generates a REACTIV-type color composition while restricting observation periods to the same seasonal windows each year.  
+By selecting winters, it eliminates variations related to snow dynamics, enhancing the detection of glacial surges.  
+By selecting summers, it allows for the detection of the snow cover.
+
+🔹 **Authors & References:**
+**REACTIV Color Composition** was developed in **Google Earth Engine (GEE)** by **Elise Colin**.
+
+The **seasonal version** of the method was proposed by **Laurane Charrier**.
+See: "Mountain glaciers analyzed by remote sensing", 
+https://elisecolin.medium.com/mountain-glaciers-analyzed-by-remote-sensing-5812c65534b8
+
+
+The theoretical foundations were published in:  
+  📖 Colin, E., & Nicolas, J. M. (2020).  
+  *Change detection based on the coefficient of variation in SAR time-series of urban areas.*  
+  Remote Sensing, 12(13), 2089.  
+
+
+
+🔹 **User-defined Inputs (to set at the beginning of the script):**
+
+Examples:
+var str1 = '2020-03-01';    // 📅 Start of the observation period (format: 'YY-MM-dd')
+var str2 = '2025-01-01';    // 📅 End of the observation period (format: 'YY-MM-dd')
+var seasonStart = '11-16';  // ❄️ Start of the seasonal window (November 16) (format: 'MM-dd')
+var seasonEnd = '01-03';    // ❄️ End of the seasonal window (January 3) (format: 'MM-dd')
+
+
+🔹 **Nice geographic places:**
+Kyagar: 77.2, 35.6 at zoom 8 
+Lowell (Canada) Glacier 60.2833° Latitude Nord -138.2167 (W) 11 (-138.2167 60.2833 11 )
+Thame (Nepal) 27,912° de latitude Nord et 88,1956 latitude Est (88.1956 27.912 11)
+/*
+==================================================================================
+*/
+
+var str1='2018-01-01';     // Start of the Observation 'YY-MM-dd'
+var str2='2025-03-01';     // End of the Observation 'YY-MM-dd'
+var seasonStart = '11-01'; // Start of the season (November 16) 'MM-dd'
+var seasonEnd = '03-01';   // End of the season (January 3) 'MM-dd' 
+
+
+// ----------------------------------------------------------------------
+// COMPUTE COLLECTION
+// ----------------------------------------------------------------------
+
+var startDate = ee.Date(str1);
+var endDate = ee.Date(str2);
+
+
+var ds = endDate.difference(startDate, 'day');
+
+// Centering
+var pos = Map.getCenter();
+
+// Load the Sentinel-1 ImageCollection centered on the location "pos"
+var sentinel1_liste = ee.ImageCollection('COPERNICUS/S1_GRD_FLOAT')
+  .filterDate(startDate, endDate)
+  .filterBounds(pos);
+
+
+var NbOrbit = sentinel1_liste.aggregate_count_distinct('relativeOrbitNumber_start');
+var ListOrbits = sentinel1_liste.aggregate_array('relativeOrbitNumber_start');
+// find orbit numbers and their frequency
+var freq = ee.Dictionary(ee.List(ListOrbits).reduce(ee.Reducer.frequencyHistogram()));
+var array = ee.Array([freq.keys().map(ee.Number.parse), freq.values()]);
+// orbit choice : first, the one with the max frequency
+var frequences = array.slice(0,-1);
+var arraysort = array.sort(frequences);
+var index = ee.Number(NbOrbit).add(-1);
+var orbite = arraysort.get([0,ee.Number(index)]);
+// find images with the chosen orbit
+var sentinel1 = sentinel1_liste.filterMetadata('relativeOrbitNumber_start', 'equals', orbite);
+
+// Ascending or Descending
+var modePass = sentinel1.aggregate_array('orbitProperties_pass').distinct();
+// Acquisition Mode 
+var acquisitionMode = sentinel1.aggregate_array('instrumentMode').distinct();
+
+// Polarimetric channels
+var allPolarizations = sentinel1.aggregate_array('transmitterReceiverPolarisation');
+// Intersection of common polarimetric channels for all orbits
+var commonPolarizations = allPolarizations.iterate(function(list, intersection) {
+  return ee.List(intersection).removeAll(ee.List(intersection).removeAll(ee.List(list)));
+}, allPolarizations.get(0));  // Initialize with the first list
+var polarList = ee.List(commonPolarizations);
+var NumberOfChannels = polarList.length();
+var polar1 = ee.Algorithms.If(NumberOfChannels.gte(1), polarList.get(0), null);
+var polar2 = ee.Algorithms.If(NumberOfChannels.eq(2), polarList.get(1), null);
+var polar1 = ee.List([polar1]); 
+var polar2 = ee.List([polar2]); 
+
+
+
+// ----------------------------------------------------------------------
+// COLLECTION SUMMARY
+// ----------------------------------------------------------------------
+// Checking and converting lists into strings
+var formattedModePass = ee.String(ee.List(modePass).join(", "));
+var formattedAcquisitionMode = ee.String(ee.List(acquisitionMode).join(", "));
+
+// Check if `commonPolarizations` is empty and format the display
+var formattedPolarizations = ee.Algorithms.If(
+  ee.List(commonPolarizations).size().gt(0),  // Check if the list has elements
+  ee.String(ee.List(commonPolarizations).join(", ")), 
+  ee.String("None")  // If the list is empty, display “None”.
+);
+
+var summary = ee.Dictionary({
+  '🌍 Center Coordinates': pos,
+  '🛰️ Selected Orbit': orbite,
+  '📡 Orbit Mode': formattedModePass,
+  '🛠️ Acquisition Mode': formattedAcquisitionMode,
+  '📊 Number of Polarimetric Channels': NumberOfChannels,
+  '🎭 Common Polarizations in All Images': formattedPolarizations
+});
+
+// Clean display in a single print()
+print('📊 Sentinel-1 Summary:', summary);
+
+
+
+// ----------------------------------------------------------------------
+// Does the season overlap two years? 
+// ----------------------------------------------------------------------
+
+// Function to convert 'MM-dd' to day of year
+function getDayOfYear(dateString, year) {
+  var date = ee.Date.fromYMD(year, ee.Number.parse(dateString.split('-')[0]), ee.Number.parse(dateString.split('-')[1]));
+  return date.getRelative('day', 'year');
+}
+// Utility function to separate MM-dd
+function parseMonthDay(mmddString) {
+  var parts = ee.String(mmddString).split('-');
+  return {
+    month: ee.Number.parse(parts.get(0)),
+    day:   ee.Number.parse(parts.get(1))
+  };
+}
+var startMD = parseMonthDay(seasonStart); // {month: x, day: y}
+var endMD   = parseMonthDay(seasonEnd);   // {month: x, day: y}
+// Test to see if the season “overflows” into the following year
+var bridging = endMD.month.lt(startMD.month)
+  .or(
+    endMD.month.eq(startMD.month).and(endMD.day.lt(startMD.day))
+  );
+
+
+// ----------------------------------------------------------------------
+// Calculation of years to cover
+// ----------------------------------------------------------------------
+var startYear = startDate.get('year');
+var endYear   = endDate.get('year');
+// List of years [startYear .. endYear]
+var years = ee.List.sequence(startYear, endYear);
+// Creation of the season interval for a year y 
+function makeSeasonInterval(y) {
+  y = ee.Number(y);
+  // If bridging is true, the end of season is year y+1, otherwise it's the same year y  
+  var sYear = y;
+  var eYear = ee.Algorithms.If(bridging.eq(1), y.add(1), y);
+  // Build the startSeason and endSeason for this year
+  var startSeason = ee.Date.fromYMD(sYear, startMD.month, startMD.day);
+  var endSeason   = ee.Date.fromYMD(eYear, endMD.month, endMD.day);
+  // Calculate overlap with [startDate, endDate] 
+  // => take max for start, min for end, in terms of timestamps
+  var overlapStart = ee.Date(
+    ee.Number(startSeason.millis()).max(startDate.millis())
+  );
+  var overlapEnd = ee.Date(
+    ee.Number(endSeason.millis()).min(endDate.millis())
+  );
+  // Returns a dictionary describing the interval
+  return ee.Dictionary({
+    'year':      y,
+    'start': overlapStart.format("YYYY-MM-dd'T'HH:mm:ss'Z'"),
+    'end':   overlapEnd.format("YYYY-MM-dd'T'HH:mm:ss'Z'"),
+  });
+}
+
+// Generate list of season intervals for each year
+var rawIntervals = years.map(function(y) {
+  return makeSeasonInterval(y);
+});
+
+var rawClient = rawIntervals.getInfo(); // => Array of dictionary objects
+var filteredClient = rawClient.filter(function(d) {
+  // d.startDate and d.endDate are strings "YYYY-MM-dd..."
+  var startMs = new Date(d.start).getTime();
+  var endMs   = new Date(d.end).getTime();
+  return startMs < endMs;  // local bolean
+});
+var validIntervals = ee.List(filteredClient.map(function(obj) {
+  return ee.Dictionary(obj);
+}));
+
+
+
+/****  Add fractions [0..1] to each interval ****/
+var finalIntervals = validIntervals.map(function(d) {
+  d = ee.Dictionary(d);
+  var st = ee.Date(d.get('start'));
+  var en = ee.Date(d.get('end'));
+  var startFrac = st.difference(startDate, 'day').divide(ds); // startFrac = (st - startDate) / ds
+  var endFrac   = en.difference(startDate, 'day').divide(ds); // endFrac   = (en - startDate) / ds
+  // On borne dans [0,1], au cas où
+  var sf = startFrac.max(0).min(1);
+  var ef = endFrac.max(0).min(1);
+  return d.combine({
+    'startFrac': sf,
+    'endFrac':   ef
+  });
+});
+
+
+
+
+// ----------------------------------------------------------------------
+// SEASONAL FILTERING
+// ----------------------------------------------------------------------
+
+function filterByFinalIntervals(imageCollection, finalIntervals) {
+    return ee.ImageCollection(
+        finalIntervals.iterate(function(interval, prev) {
+            interval = ee.Dictionary(interval);
+            var start = ee.Date(interval.get('start'));
+            var end = ee.Date(interval.get('end'));
+            var filtered = imageCollection.filterDate(start, end);
+            return ee.ImageCollection(prev).merge(filtered);
+        }, ee.ImageCollection([]))
+    );
+}
+
+// Apply the filter function
+var filteredSentinel1 = filterByFinalIntervals(sentinel1, finalIntervals);
+// Result display
+print('📂 Sentinel-1 filtered collection:', filteredSentinel1);
+sentinel1=filteredSentinel1
+
+
+
+
+
+
+
+// ----------------------------------------------------------------------
+// DATES 
+// ----------------------------------------------------------------------
+var range = sentinel1.select(polar1).reduceColumns(ee.Reducer.minMax(), ["system:time_start"]);
+var minDate = ee.Date(range.get('min')).format('YYYY-MM-dd');
+var maxDate = ee.Date(range.get('max')).format('YYYY-MM-dd');
+// Format dates to make them readable
+var okMap2 = sentinel1.select(polar1).map(function(image) {
+  return image.set('date', image.date().format('YYYY-MM-dd'));
+});
+// Obtain a single list of sorted dates
+var datesList = okMap2.aggregate_array('date').distinct().sort();
+// Count the number of unique dates
+var datesCount = datesList.size();
+// Formatted summary of dates
+var dateSummary = ee.Dictionary({
+  '📅 Date Range': minDate.cat(' → ').cat(maxDate),
+  '📊 Number of Unique Dates': datesCount,
+  '🗓️ List of Dates': datesList
+});
+// Compact display
+print('📆 Sentinel-1 Date Summary:', dateSummary);
+
+
+
+// ----------------------------------------------------------------------
+// REACTIV RGB COMPUTATION
+// ----------------------------------------------------------------------
+
+
+// This function applies to each image the linear scale
+var amplitude = function(image) {
+  var imlin = image.expression(
+    'sqrt(intensity)', {
+      'intensity': image
+  });
+  return imlin; // conversion in linear, then compute mean: classical mean
+};
+
+
+// **2 polarisations**
+var result = ee.Algorithms.If(
+  NumberOfChannels.eq(2),
+  
+  // If NumberOfChannels == 2
+  (function() {
+    var stdLinear1 = sentinel1.select(polar1).map(amplitude).reduce(ee.Reducer.stdDev());
+    var meanLinear1 = sentinel1.select(polar1).map(amplitude).reduce(ee.Reducer.mean());
+    var magic1 = stdLinear1.divide(meanLinear1);
+
+    var stdLinear2 = sentinel1.select(polar2).map(amplitude).reduce(ee.Reducer.stdDev());
+    var meanLinear2 = sentinel1.select(polar2).map(amplitude).reduce(ee.Reducer.mean());
+    var magic2 = stdLinear2.divide(meanLinear2);
+    
+    var imax1 = sentinel1.select(polar1).max();
+    var imax2 = sentinel1.select(polar2).max();
+    var magic = magic1.max(magic2);
+    var imax = imax1.max(imax2);
+
+    // Time calculation function for first polarization
+    var time1 = function(image) {
+      var days = image.date().difference(startDate, 'day').divide(ds);
+      return image.where(image.lt(imax1), 0).where(image.gte(imax1), days);
+    };
+    var days1 = sentinel1.select(polar1).map(time1).sum();
+
+    // Time calculation function for second polarization
+    var time2 = function(image) {
+      var days = image.date().difference(startDate, 'day').divide(ds);
+      return image.where(image.lt(imax2), 0).where(image.gte(imax2), days);
+    };
+    var days2 = sentinel1.select(polar2).map(time2).sum();
+
+    var days = days2.where(magic2.lte(magic1), days1);
+    
+    return {
+      days: days,
+      magic: magic,
+      imax: imax
+    };
+  })(),
+  
+  // If NumberOfChannels == 1
+  (function() {
+    var stdLinear1 = sentinel1.select(polar1).map(amplitude).reduce(ee.Reducer.stdDev());
+    var meanLinear1 = sentinel1.select(polar1).map(amplitude).reduce(ee.Reducer.mean());
+    var magic1 = stdLinear1.divide(meanLinear1);
+    
+    var imax1 = sentinel1.select(polar1).max();
+    var magic = magic1;
+    var imax = imax1;
+
+    // Time calculation function for first and single polarization
+    var time1 = function(image) {
+      var days = image.date().difference(startDate, 'day').divide(ds);
+      return image.where(image.lt(imax1), 0).where(image.gte(imax1), days);
+    };
+    var days1 = sentinel1.select(polar1).map(time1).sum();
+
+    return {
+      days: days1,
+      magic: magic,
+      imax: imax
+    };
+  })()
+);
+
+// Extraction of final Results
+var days = ee.Image(ee.Dictionary(result).get('days'));
+var magic = ee.Image(ee.Dictionary(result).get('magic'));
+var imax = ee.Image(ee.Dictionary(result).get('imax'));
+
+// Images of Number of images: StackSize
+var unit = function(image) {
+  var imunit = image.multiply(0).add(1);
+  return imunit; // conversion in linear, then compute mean: classical mean
+};
+var sizepile=sentinel1.select(polar1).map(unit).sum(); 
+
+// Parameter for dynamics
+var mu=0.2286; // Theoretical mean for Rayleigh Nakagam L=4.9
+var stdmu=ee.Image(0.1616);
+var stdmu=stdmu.divide(sizepile.sqrt()); // Theoretical std for Rayleigh Nakagami L=4.9
+var magicnorm=magic.subtract(mu).divide(stdmu.multiply(10)).clamp(0,1);
+
+
+var rgb=ee.Image.cat(days,magicnorm,(imax).multiply(1).clamp(0,1)).hsvToRgb();
+Map.setOptions('satellite');
+var visparams = {min: [0, 0, 0],
+                 max: [1, 1, 1],
+                 gamma: 2};
+Map.addLayer(rgb, visparams,'REACTIV Visualization');
+
+
+
+// ----------------------------------------------------------------------
+// COLORED TIMELINE LEGEND
+// ----------------------------------------------------------------------
+
+var clientList = finalIntervals.getInfo();
+
+
+function fractionToHex(hueFrac) {
+  hueFrac = ee.Number(hueFrac).clamp(0, 1);
+  var hsvImg = ee.Image.cat([hueFrac, 1, 1]).rename(['h', 's', 'v']);
+  var rgbImg = hsvImg.hsvToRgb().multiply(255).round().toInt();
+  var stats = rgbImg.reduceRegion({
+    reducer: ee.Reducer.first(),
+    geometry: ee.Geometry.Point([0, 0]), // Arbitrary point
+    scale: 10,
+    bestEffort: true,
+    maxPixels: 1e6
+  });
+  var r = ee.Number(stats.get('red')).format('%02X');
+  var g = ee.Number(stats.get('green')).format('%02X');
+  var b = ee.Number(stats.get('blue')).format('%02X');
+  return ee.String('#').cat(r).cat(g).cat(b);
+}
+
+
+
+var withHex = finalIntervals.map(function(elem) {
+  elem = ee.Dictionary(elem);
+  var sf = ee.Number(elem.get('startFrac'));
+  var ef = ee.Number(elem.get('endFrac'));
+  var startHex = fractionToHex(sf);
+  var endHex   = fractionToHex(ef);
+  return elem.combine({
+    'startHex': startHex,
+    'endHex':   endHex
+  });
+});
+var clientList = withHex.getInfo();
+
+
+function makeLegend(vis,d1,d2) {
+  var lon = ee.Image.pixelLonLat().select('longitude');
+  var gradient = lon.multiply(1/360.0);
+  var legendImage = gradient.visualize(vis);
+  var thumb = ui.Thumbnail({
+    image: legendImage,
+    params: {bbox:'0,0,360,4', dimensions:'70x10'},
+    style: {padding: '1px', position: 'bottom-center',backgroundColor:'black'}
+    });
+  var panel = ui.Panel({
+  widgets: [
+  ui.Label(d1),
+  ui.Label(d2),
+  ],
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {stretch: 'horizontal',backgroundColor:'black',color:'blue'}
+  });
+  return ui.Panel({style: {backgroundColor: 'black'}}).add(panel).add(thumb);
+}
+
+
+
+function formatDate(dateString) {
+  return dateString.slice(2, 10); // Keep only “YY-MM-dd”.
+}
+
+for (var i=0; i<clientList.length; i++) {
+  var startHex = clientList[i].startHex;
+  var endHex   = clientList[i].endHex;
+  var numElements = 10; // Set the number of elements in the palette - Adjust the number to suit your needs
+  
+  var startFrac = clientList[i].startFrac;
+  var endFrac = clientList[i].endFrac;
+
+  // Automatic step calculation based on number of elements
+  var step = (endFrac - startFrac) / (numElements - 1);
+  
+  // Fraction list creation
+  var fracList = ee.List.sequence(startFrac, endFrac, step);
+
+  // Generate palette by applying fractionToHex to each fracList element
+  var palettehsv = fracList.map(function(hueFrac) {
+    return ee.String(fractionToHex(hueFrac));
+  });
+
+
+  var pal = {
+    min: 0,
+    max: 1,
+    palette: palettehsv
+  };
+    // Format dates before passing them to makeLegend
+  var formattedStartDate = formatDate(clientList[i].start);
+  var formattedEndDate = formatDate(clientList[i].end);
+  Map.add(makeLegend(pal, formattedStartDate, formattedEndDate));
+}
+
+
+// ----------------------------------------------------------------------
+// TIME PROFILE PLOT
+// ----------------------------------------------------------------------
+// Create the title label.
+var title = ui.Label('Click to inspect');
+title.style().set('position', 'bottom-center');
+Map.add(title);
+
+// Create a panel to hold the chart.
+var panel = ui.Panel();
+panel.style().set({
+  width: '400px',
+  position: 'bottom-right'
+});
+Map.add(panel);
+
+var selectedBands = ee.List([
+  ee.Algorithms.If(polar1, polar1.get(0), null), 
+  ee.Algorithms.If(polar2, polar2.get(0), null)
+]).removeAll([null]);
+// Convert `selectedBands` to a native JavaScript array
+var selectedBandsJS = selectedBands.getInfo();  
+
+// Register a function to draw a chart when a user clicks on the map.
+Map.onClick(function(coords) {
+  panel.clear();
+  var point = ee.Geometry.Point(coords.lon, coords.lat);
+  print('Coordinates for the plot: ', point);
+  if (selectedBandsJS.length === 0) {
+    if (panel.widgets().length() === 0) { // Prevent multiple display of message
+      panel.add(ui.Label("❌ Error: No valid band for graph display."));
+    }
+    return; // Stop execution here
+  }
+  // Dynamic graph creation based on available bands
+  var chart2 = ui.Chart.image.series(sentinel1.select(selectedBandsJS), point, null, 30)
+    .setChartType('ScatterChart')
+    .setOptions({
+      title: 'Temporal Profile',
+      hAxis: { title: 'Acquisition Date' },
+      vAxis: { title: 'Intensity Values (linear)' },
+    });
+
+  panel.add(chart2);
+});
