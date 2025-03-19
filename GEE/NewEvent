@@ -1,0 +1,295 @@
+/*
+==================================================================================
+📌 REACTIV NEW EVENT DETECTION under Google Earth Engine (GEE) by CV ratio method
+==================================================================================
+
+🔹 **Description:**
+This script detects new Event compared to a previous time series 
+
+🔹 **Authors & References:**
+This code was developed by Elise Colin at ONERA.
+
+Please cite this paper if you use this code:
+  📖 Colin, E., & Nicolas, J. M. (2020).  
+  *Change detection based on the coefficient of variation in SAR time-series of urban areas.*  
+  Remote Sensing, 12(13), 2089.  
+
+
+🔹 **User-defined Inputs (to set at the beginning of the script):**
+
+Examples:
+var str2 = '2022-03-01';    // 📅 Start of the observation period (format: 'YY-MM-dd')
+var durationMonths = 6;     // 📅 Duration of the observation period (format: M)
+
+
+🔹 **Insteresting geographic places:**
+-5.80061 15.83701  15      M'bara Camp
+
+/*
+==================================================================================
+*/
+
+
+// =========================================================================
+// 1. User parameters 
+// =========================================================================
+
+
+// raining events 2018-09-10
+var str2='2020-06-01';     // End of the Observation 'YY-MM-dd' 
+var durationMonths = 6;    // Duration of the time series ( in month)
+
+// =========================================================================
+// 2. Compute Collection
+// =========================================================================
+var endDate = ee.Date(str2);
+var startDate = endDate.advance(-durationMonths, 'month');  
+
+var ds = endDate.difference(startDate, 'day');
+
+// Centering
+var pos = Map.getCenter();
+
+// Load the Sentinel-1 ImageCollection centered on the location "pos"
+var sentinel1_liste = ee.ImageCollection('COPERNICUS/S1_GRD_FLOAT')
+  .filterBounds(pos);
+
+
+var NbOrbit = sentinel1_liste.aggregate_count_distinct('relativeOrbitNumber_start');
+var ListOrbits = sentinel1_liste.aggregate_array('relativeOrbitNumber_start');
+// find orbit numbers and their frequency
+var freq = ee.Dictionary(ee.List(ListOrbits).reduce(ee.Reducer.frequencyHistogram()));
+var array = ee.Array([freq.keys().map(ee.Number.parse), freq.values()]);
+// orbit choice : first, the one with the max frequency
+var frequences = array.slice(0,-1);
+var arraysort = array.sort(frequences);
+var index = ee.Number(NbOrbit).add(-1);
+var orbite = arraysort.get([0,ee.Number(index)]);
+// find images with the chosen orbit
+var sentinel1 = sentinel1_liste.filterMetadata('relativeOrbitNumber_start', 'equals', orbite);
+
+
+// Ascending or Descending
+var modePass = sentinel1.aggregate_array('orbitProperties_pass').distinct();
+// Acquisition Mode 
+var acquisitionMode = sentinel1.aggregate_array('instrumentMode').distinct();
+
+// Polarimetric channels
+var allPolarizations = sentinel1.aggregate_array('transmitterReceiverPolarisation');
+// Intersection of common polarimetric channels for all orbits
+print(allPolarizations)
+var commonPolarizations = allPolarizations.iterate(function(list, intersection) {
+  return ee.List(intersection).removeAll(ee.List(intersection).removeAll(ee.List(list)));
+}, allPolarizations.get(0));  // Initialize with the first list
+var polarList = ee.List(commonPolarizations);
+var NumberOfChannels = polarList.length();
+var polar1 = ee.Algorithms.If(NumberOfChannels.gte(1), polarList.get(0), null);
+var polar2 = ee.Algorithms.If(NumberOfChannels.eq(2), polarList.get(1), null);
+var polar1 = ee.List([polar1]); 
+var polar2 = ee.List([polar2]); 
+
+
+
+// ----------------------------------------------------------------------
+// COLLECTION SUMMARY
+// ----------------------------------------------------------------------
+// Checking and converting lists into strings
+var formattedModePass = ee.String(ee.List(modePass).join(", "));
+var formattedAcquisitionMode = ee.String(ee.List(acquisitionMode).join(", "));
+
+// Check if `commonPolarizations` is empty and format the display
+var formattedPolarizations = ee.Algorithms.If(
+  ee.List(commonPolarizations).size().gt(0),  // Check if the list has elements
+  ee.String(ee.List(commonPolarizations).join(", ")), 
+  ee.String("None")  // If the list is empty, display “None”.
+);
+
+var summary = ee.Dictionary({
+  '🌍 Center Coordinates': pos,
+  '🛰️ Selected Orbit': orbite,
+  '📡 Orbit Mode': formattedModePass,
+  '🛠️ Acquisition Mode': formattedAcquisitionMode,
+  '📊 Number of Polarimetric Channels': NumberOfChannels,
+  '🎭 Common Polarizations in All Images': formattedPolarizations
+});
+
+
+print('📊 Sentinel-1 Summary:', summary);
+
+
+// =========================================================================
+// 2. Separate Two series : Before /After
+// =========================================================================
+
+
+// Trier les images Sentinel-1 par date croissante
+var sortedCollection = sentinel1.sort('system:time_start', true);
+
+// Trouver la première date après startDate
+var afterStart = sortedCollection.filter(ee.Filter.date(startDate, endDate))
+                                 .first()
+                                 .get('system:time_start');
+
+// Trouver la dernière date avant endDate
+var beforeEnd = sortedCollection.filter(ee.Filter.date(startDate, endDate))
+                                .sort('system:time_start', false)
+                                .first()
+                                .get('system:time_start');
+
+// Définir les nouvelles bornes temporelles basées sur les dates réelles trouvées
+var realStartDate = ee.Date(afterStart);
+var realEndDate = ee.Date(beforeEnd);
+
+// Trouver la dernière date avant realStartDate
+var beforeStart = sortedCollection.filter(ee.Filter.date(startDate.advance(-1, 'month'), startDate))
+                                  .sort('system:time_start', false)
+                                  .first()
+                                  .get('system:time_start');
+
+// Trouver la première date après realEndDate
+var afterEnd = sortedCollection.filter(ee.Filter.date(endDate, endDate.advance(1, 'month')))
+                               .sort('system:time_start', true)
+                               .first()
+                               .get('system:time_start');
+
+// Définir les nouvelles bornes pour la série décalée
+var shiftedStartDate = ee.Date(beforeStart);
+var shiftedEndDate = ee.Date(afterEnd);
+
+// Création d'un dictionnaire contenant toutes les dates
+var dateSummary = ee.Dictionary({
+  '📌 Target Start Date': startDate.format('YYYY-MM-dd'),
+  '📌 Target End Date': endDate.format('YYYY-MM-dd'),
+  '✅ Actual Start Date': realStartDate.format('YYYY-MM-dd'),
+  '✅ Actual End Date': realEndDate.format('YYYY-MM-dd'),
+  '🔄 Shifted Series Start Date': shiftedStartDate.format('YYYY-MM-dd'),
+  '🔄 Shifted Series End Date': shiftedEndDate.format('YYYY-MM-dd')
+});
+
+// Affichage regroupé
+print('🛰️ Temporal Analysis Summary', dateSummary);
+
+
+// Filtrer les collections Sentinel-1 avec les dates réelles trouvées
+// Ajout d'un jour aux dates de fin pour s'assurer qu'elles sont incluses
+var s1_1 = sentinel1.filterDate(realStartDate, shiftedEndDate.advance(1, 'day'));  // Série principale
+var s1_2 = sentinel1.filterDate(shiftedStartDate, realEndDate.advance(1, 'day'));  // Série décalée
+
+
+// =========================================================================
+// 3. Compute the detection
+// =========================================================================
+
+
+
+// This function applies to each image the linear scale
+var amplitude = function(image) {
+  var imlin = image.expression(
+    'sqrt(intensity)', {
+      'intensity': image
+  });
+  return imlin; // conversion in linear, then compute mean: classical mean
+};
+
+
+var stdLinear = s1_1.select(polar2).map(amplitude).reduce(ee.Reducer.stdDev());
+var meanLinear = s1_1.select(polar2).map(amplitude).reduce(ee.Reducer.mean());
+var magic1vh=stdLinear.divide(meanLinear);
+
+var stdLinear = s1_2.select(polar2).map(amplitude).reduce(ee.Reducer.stdDev());
+var meanLinear = s1_2.select(polar2).map(amplitude).reduce(ee.Reducer.mean());
+var magic2vh=stdLinear.divide(meanLinear);
+
+
+var stdLinear = s1_1.select(polar1).map(amplitude).reduce(ee.Reducer.stdDev());
+var meanLinear = s1_1.select(polar1).map(amplitude).reduce(ee.Reducer.mean());
+var magic1vv=stdLinear.divide(meanLinear);
+
+var stdLinear = s1_2.select(polar1).map(amplitude).reduce(ee.Reducer.stdDev());
+var meanLinear = s1_2.select(polar1).map(amplitude).reduce(ee.Reducer.mean());
+var magic2vv=stdLinear.divide(meanLinear);
+
+var ratio2vh=magic2vh.divide(magic1vh);
+var ratio2vv=magic2vv.divide(magic1vv);
+var rgb2=ee.Image.cat(ee.Image(1).subtract(ratio2vv),ee.Image(1).subtract(ratio2vh),ee.Image(1).subtract(ratio2vh));
+
+
+// =========================================================================
+// 4. MAP the result
+// =========================================================================
+
+
+var visparams = {min: [0, 0,0],
+                 max: [1, 1,1],
+                 gamma: 0.8};
+Map.addLayer(rgb2, visparams,'New Event');
+var tresh=0.5
+
+var neweventvh=ratio2vh.lt(tresh);
+var neweventvv=ratio2vv.lt(tresh);
+
+Map.setOptions('satellite');
+//Map.addLayer(ee.Image(1).updateMask(newevent), {min: [0.5], max: [1]},'Change detection Map')
+
+
+var boundary=Map.getBounds();
+var geo = ee.Geometry.Rectangle(boundary[0], boundary[1], boundary[2], boundary[3]);
+var zonesvh = neweventvh.updateMask(neweventvh.neq(0));
+var vectorsvh = zonesvh.reduceToVectors({
+  geometryType: 'centroid',
+  geometry: geo,
+  scale:10,
+  labelProperty: 'zone'
+});
+var zonesvv = neweventvv.updateMask(neweventvv.neq(0));
+var vectorsvv = zonesvv.reduceToVectors({
+  geometryType: 'centroid',
+  geometry: geo,
+  scale:10,
+  labelProperty: 'zone'
+});
+var styleParamsvh = {
+  color: '#0000FF',
+  width: 10,
+};
+var styleParamsvv = {
+  color: '#FF0000',
+  width: 10,
+};
+var DetectionPointsvh = vectorsvh.style(styleParamsvh);
+var DetectionPointsvv = vectorsvv.style(styleParamsvv);
+Map.addLayer(DetectionPointsvh, {}, 'detection VH');
+Map.addLayer(DetectionPointsvv, {}, 'detection VV');
+
+//print(vectorsvv.length())
+print('Number of Points detected by VV',vectorsvv.size())
+print('Number of Points detected by VH',vectorsvh.size())
+
+
+// =========================================================================
+// 5. Panel for time series PLOT 
+// =========================================================================
+
+
+// Create a panel to hold the chart.
+var panel = ui.Panel();
+panel.style().set({
+  width: '400px',
+  position: 'bottom-right'
+});
+Map.add(panel);
+
+// Register a function to draw a chart when a user clicks on the map.
+Map.onClick(function(coords) {
+  panel.clear();
+  var point = ee.Geometry.Point(coords.lon, coords.lat);
+  var chart2=ui.Chart.image.series(s1_1.select('VV','VH'), point, null, 30)
+  .setChartType('ScatterChart')
+      .setOptions({
+      title: 'temporal profile',
+      hAxis: {title: 'Acquisition Date'},
+      vAxis: {title: 'Intensity Values (dB)'},
+      });
+  panel.add(chart2);
+});
+
