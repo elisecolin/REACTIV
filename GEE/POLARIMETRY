@@ -1,0 +1,307 @@
+/*
+==================================================================================
+📌 REACTIV Polarimetric Version under Google Earth Engine (GEE)
+==================================================================================
+
+🔹 **Description:**
+This script generates a polarimetric version of the REACTIV-type color composition, integrating polarimetric speckle analysis as described by Colin and Ossikovski (2024).
+
+🔹 **Authors & References:**
+**REACTIV Polarimetric Composition** was developed in **Google Earth Engine (GEE)** by **Elise Colin**.
+This code was developed by Elise Colin at ONERA, adapted for polarimetric analysis based on the theoretical foundations presented in:
+(Please cite this paper if you use this code:)
+  📚 Colin, E., & Ossikovski, R. (2024).  
+  *Towards a Unified Formalism of Multivariate Coefficients of Variation: Application to the Analysis of Polarimetric Speckle Time Series.*  
+  Journal of the Indian Society of Remote Sensing, 52(12), 2625-2636.
+
+
+🔹 **User-defined Inputs (to set at the beginning of the script):**
+
+Examples:
+var str1 = '2022-03-01';    // 📅 Start of the observation period (format: 'YY-MM-dd')
+var str2 = '2025-01-01';    // 📅 End of the observation period (format: 'YY-MM-dd')
+
+
+🔹 **Nice geographic places:**
+
+
+/*
+==================================================================================
+*/
+
+
+// =========================================================================
+// 1. User parameters 
+// =========================================================================
+
+var str1='2020-01-01';     // Start of the Observation 'YY-MM-dd'
+var str2='2024-12-31';     // End of the Observation 'YY-MM-dd'
+var croppalet=0.66
+
+
+
+
+// =========================================================================
+// 2. COMPUTE COLLECTION
+// =========================================================================
+
+var startDate = ee.Date(str1);
+var endDate = ee.Date(str2);
+var ds = endDate.difference(startDate, 'day');
+// Centering
+var pos = Map.getCenter();
+
+// Load the Sentinel-1 ImageCollection centered on the location "pos"
+var sentinel1_liste = ee.ImageCollection('COPERNICUS/S1_GRD_FLOAT')
+  .filterDate(startDate, endDate)
+  .filterBounds(pos);
+
+
+var NbOrbit = sentinel1_liste.aggregate_count_distinct('relativeOrbitNumber_start');
+var ListOrbits = sentinel1_liste.aggregate_array('relativeOrbitNumber_start');
+var freq = ee.Dictionary(ee.List(ListOrbits).reduce(ee.Reducer.frequencyHistogram()));
+var array = ee.Array([freq.keys().map(ee.Number.parse), freq.values()]);
+var frequences = array.slice(0,-1);
+var arraysort = array.sort(frequences);
+var index = ee.Number(NbOrbit).add(-1);
+var orbite = arraysort.get([0,ee.Number(index)]);
+var sentinel1 = sentinel1_liste.filterMetadata('relativeOrbitNumber_start', 'equals', orbite);
+
+var modePass = sentinel1.aggregate_array('orbitProperties_pass').distinct();
+var acquisitionMode = sentinel1.aggregate_array('instrumentMode').distinct();
+
+var allPolarizations = sentinel1.aggregate_array('transmitterReceiverPolarisation');
+var commonPolarizations = allPolarizations.iterate(function(list, intersection) {
+  return ee.List(intersection).removeAll(ee.List(intersection).removeAll(ee.List(list)));
+}, allPolarizations.get(0));
+var polarList = ee.List(commonPolarizations);
+
+var NumberOfChannels = polarList.length();
+
+
+if (NumberOfChannels.getInfo() !== 2) {
+  throw new Error('⚠️ Polarimetric version not applicable: Exactly two polarimetric channels are required.');
+}
+
+var polar1 = polarList.get(0);
+var polar2 = polarList.get(1);
+var polar1 = ee.List([polar1]); 
+var polar2 = ee.List([polar2]); 
+
+
+
+// Checking and converting lists into strings
+var formattedModePass = ee.String(ee.List(modePass).join(", "));
+var formattedAcquisitionMode = ee.String(ee.List(acquisitionMode).join(", "));
+
+// Check if `commonPolarizations` is empty and format the display
+var formattedPolarizations = ee.Algorithms.If(
+  ee.List(commonPolarizations).size().gt(0),  // Check if the list has elements
+  ee.String(ee.List(commonPolarizations).join(", ")), 
+  ee.String("None")  // If the list is empty, display “None”.
+);
+
+var summary = ee.Dictionary({
+  '🌍 Center Coordinates': pos,
+  '🛰️ Selected Orbit': orbite,
+  '📡 Orbit Mode': formattedModePass,
+  '🛠️ Acquisition Mode': formattedAcquisitionMode,
+  '📊 Number of Polarimetric Channels': NumberOfChannels,
+  '🎭 Common Polarizations in All Images': formattedPolarizations
+});
+
+
+print('📊 Sentinel-1 Summary:', summary);
+
+
+
+// =========================================================================
+// 3. Compute Multivariate Coefficient of Variation Min and Max bounds
+// =========================================================================
+
+// This function applies a linear scale conversion to each image in the collection
+var amplitude = function(image) {
+  var imlin = image.expression(
+    'sqrt(intensity)', {
+      'intensity': image
+  });
+  return imlin; // Conversion to linear scale for classical mean computation
+};
+// Selection of time series for polarimetric channels polar1 and polar2
+var SeriesPolar1 = sentinel1.select(polar1).map(amplitude);
+var SeriesPolar2 = sentinel1.select(polar2).map(amplitude);
+// Computation of the mean for each polarimetric channel of time series 
+var meanPolar1 = SeriesPolar1.mean();
+var meanPolar2 = SeriesPolar2.mean();
+
+// Normalization of time series by their respective means
+var seriesPolar1 = SeriesPolar1.map(function(image) {
+  return image.divide(meanPolar1);
+});
+var seriesPolar2 = SeriesPolar2.map(function(image) {
+  return image.divide(meanPolar2);
+});
+var meanPolar1 = seriesPolar1.mean();
+var meanPolar2 = seriesPolar2.mean();
+
+
+var stdLinear1 = seriesPolar1.reduce(ee.Reducer.stdDev());
+var magic1 = stdLinear1.divide(meanPolar1);
+var stdLinear2 = seriesPolar2.reduce(ee.Reducer.stdDev());
+var magic2 = stdLinear2.divide(meanPolar2);
+ 
+
+// Computation of deviations from the mean for each time series
+var deviationPolar1 = seriesPolar1.map(function(image) {
+  return image.subtract(meanPolar1);
+});
+
+var deviationPolar2 = seriesPolar2.map(function(image) {
+  return image.subtract(meanPolar2);
+});
+// Computation of c11 = mean((seriesPolar1 - meanPolar1)^2)
+var c11 = deviationPolar1.map(function(image) {
+  return image.pow(2);  // (seriesPolar1 - meanPolar1)^2
+}).reduce(ee.Reducer.mean());
+
+// Manual computation of c22 = mean((seriesPolar2 - meanPolar2)^2)
+var c22 = deviationPolar2.map(function(image) {
+  return image.pow(2);  // (seriesPolar2 - meanPolar2)^2
+}).reduce(ee.Reducer.mean());
+
+// Pair the two image series using zip()
+var pairedSeries = deviationPolar1.toList(deviationPolar1.size()).zip(deviationPolar2.toList(deviationPolar2.size()));
+// Function to calculate pixel-wise product for each pair of images
+var productSeries = ee.ImageCollection(pairedSeries.map(function(pair) {
+  pair = ee.List(pair);
+  var image1 = ee.Image(pair.get(0));
+  var image2 = ee.Image(pair.get(1));
+  return image1.multiply(image2).copyProperties(image1, image1.propertyNames());
+}));
+var c12 = productSeries.mean();
+// Computation of delta = sqrt((c11 - c22)^2 + 4 * c12^2)
+var delta = c11.subtract(c22).pow(2).add(c12.pow(2).multiply(4)).sqrt();
+// Computation of eigenvalues (maximum and minimum)
+var lambdamaxi = c11.add(c22).add(delta).divide(2);  // Maximum eigenvalue
+var lambdamini = c11.add(c22).subtract(delta).divide(2);  // Minimum eigenvalue
+// Computation of the norm of the mean vector
+var normMU = (meanPolar1.pow(2).add(meanPolar2.pow(2))).sqrt();
+// Normalization of eigenvalues by the norm of the mean vector
+var limitmin_per_pixel = lambdamini.sqrt().divide(normMU);
+var limitmax_per_pixel = lambdamaxi.sqrt().divide(normMU);
+
+
+var magic=magic1.max(magic2);
+
+
+
+
+// =========================================================================
+// 4. Compute CLASSICAL REACTIV for Comparison
+// =========================================================================
+
+var imax1 = sentinel1.select(polar1).max();
+var imax2 = sentinel1.select(polar2).max();
+var imax=imax1.max(imax2);
+// This function affects value of days for pixels where maximum is reached
+var time1 = function(image) {
+  var days = image.date().difference(startDate, 'day').divide(ds); //divide by the period of time observed
+  return image.where(image.lt(imax1),0).where(image.gte(imax1),days);
+};
+var days1=sentinel1.select(polar1).map(time1).sum();
+var time2 = function(image) {
+  var days = image.date().difference(startDate, 'day').divide(ds); //divide by the period of time observed
+  return image.where(image.lt(imax2),0).where(image.gte(imax2),days);
+};
+var days2=sentinel1.select(polar2).map(time2).sum();
+var days=(days2.where(magic2.lte(magic1),days1));
+
+
+// Images of Number of images: sizepile
+var unit = function(image) {
+  var imunit = image.multiply(0).add(1);
+  return imunit; // conversion in linear, then compute mean: classical mean
+};
+var sizepile=sentinel1.select(polar1).map(unit).sum(); 
+
+// Parameter for dynamics
+var mu=0.2286; // Theoretical mean for Rayleigh Nakagam L=4.9
+var stdmu=ee.Image(0.1616);
+var stdmu=stdmu.divide(sizepile.sqrt()); // Theoretical std for Rayleigh Nakagami L=4.9
+var magicnorm=magic.subtract(mu).divide(stdmu.multiply(10)).clamp(0,1);
+
+var rgb=ee.Image.cat(days.multiply(croppalet),magicnorm,imax.clamp(0,1)).hsvToRgb();
+
+
+
+
+
+// =========================================================================
+// 5. VISUALIZATION
+// =========================================================================
+
+
+Map.setOptions('satellite');
+var visparams = {min: [0, 0, 0],max: [1, 1, 1],gamma: 2};
+
+
+var couchemin=limitmin_per_pixel.clamp(0,0.25).divide(0.25).pow(1)
+var couchemax=limitmax_per_pixel.clamp(0,0.5).divide(0.5).pow(1)
+Map.addLayer(couchemin, {min: 0, max: 1, palette: ['black', 'white']}, 'Limit Min ');
+Map.addLayer(couchemax, {min: 0, max: 1, palette: ['black', 'white']}, 'Limit Max ');
+Map.addLayer(magic1.clamp(0,0.5).divide(0.5).pow(2), {min: 0, max: 1, gamma: 1}, 'CV, Polar 1');
+Map.addLayer(magic2.clamp(0,0.5).divide(0.5).pow(2), {min: 0, max: 1, gamma: 1}, 'CV, Polar 2');
+
+
+Map.addLayer(rgb, visparams,'REACTIV Visualization');
+var rgbImage3 = ee.Image.cat(couchemin, couchemax, magic.clamp(0,0.75).divide(0.75))
+Map.addLayer(rgbImage3, {min: [0, 0, 0],max: [1, 1, 1],gamma: 0.5}, 'lmin lmax CVmax');
+
+
+
+// =========================================================================
+// 6. TIME PROFILE PLOT
+// =========================================================================
+
+// Create the title label.
+var title = ui.Label('Click to inspect');
+title.style().set('position', 'bottom-center');
+Map.add(title);
+
+// Create a panel to hold the chart.
+var panel = ui.Panel();
+panel.style().set({
+  width: '400px',
+  position: 'bottom-right'
+});
+Map.add(panel);
+
+var selectedBands = ee.List([
+  ee.Algorithms.If(polar1, polar1.get(0), null), 
+  ee.Algorithms.If(polar2, polar2.get(0), null)
+]).removeAll([null]);
+// Convert `selectedBands` to a native JavaScript array
+var selectedBandsJS = selectedBands.getInfo();  
+
+// Register a function to draw a chart when a user clicks on the map.
+Map.onClick(function(coords) {
+  panel.clear();
+  var point = ee.Geometry.Point(coords.lon, coords.lat);
+  print('Coordinates for the plot: ', point);
+  if (selectedBandsJS.length === 0) {
+    if (panel.widgets().length() === 0) { // Prevent multiple display of message
+      panel.add(ui.Label("❌ Error: No valid band for graph display."));
+    }
+    return; // Stop Execution Here
+  }
+  // Dynamic graph creation based on available bands
+  var chart2 = ui.Chart.image.series(sentinel1.select(selectedBandsJS), point, null, 30)
+    .setChartType('ScatterChart')
+    .setOptions({
+      title: 'Temporal Profile',
+      hAxis: { title: 'Acquisition Date' },
+      vAxis: { title: 'Intensity Values (linear)' },
+    });
+
+  panel.add(chart2);
+});
