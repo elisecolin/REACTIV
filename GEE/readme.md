@@ -40,10 +40,8 @@ Each script automatically selects the most frequently observed Sentinel-1 orbit 
 
 🧩 Script List
 Script	Description
-REACTIV_eventDetection	Detects new events using the Coefficient of Variation (CV) ratio between two temporal segments.
-REACTIV_frozenBackground	Builds a “frozen” background by progressively excluding outliers until statistical stability is reached.
-REACTIV_seasonal	Filters the time series to a given seasonal window (e.g., winter months) for cyclic change suppression.
-REACTIV_polarimetric	Implements the Multivariate Coefficient of Variation (MCV) for dual-polarization Sentinel-1 datasets.
+REACTIV_eventDetection	Detects new events using the Coefficient of Variation (CV) ratio between two temporal segments.  
+REACTIV_frozenBackground	Builds a “frozen” background by progressively excluding outliers until statistical stability is reached.  
+REACTIV_seasonal	Filters the time series to a given seasonal window (e.g., winter months) for cyclic change suppression.  
+REACTIV_polarimetric	Implements the Multivariate Coefficient of Variation (MCV) for dual-polarization Sentinel-1 datasets.  
    
-   var durationMonths = 6;    // Duration of the time series (months)
-   var geometry = Map.getCenter(); // Area of interest
