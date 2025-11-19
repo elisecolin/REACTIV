@@ -17,7 +17,7 @@ The extensions presented here enhance REACTIV’s interpretability and adaptabil
 | **Event-Based Detection (CV Ratio)** | Isolate newly occurring changes by comparing recent and historical temporal windows | Urban growth, ship detection, construction sites |
 | **Frozen Background (Stable Reference)** | Build a temporally stable background by iteratively removing anomalies | Port activity, forest clearing, flood aftermath |
 | **Seasonal Adaptation** | Restrict analysis to stable seasonal periods to filter cyclic natural variations | Agricultural monitoring, glacier dynamics |
-| **Polarimetric Extension (MCV)** | Exploit multivariate CV across polarization channels to enhance weak-signal discrimination | Maritime surveillance, glacial and cryospheric studies |
+| **Polarimetric Extension (MCV)** | Exploit multivariate CV across polarization channels to enhance weak-signal discrimination | RFI detection, glacial and cryospheric studies |
 
 ---
 
@@ -39,7 +39,7 @@ The extensions presented here enhance REACTIV’s interpretability and adaptabil
 Each script automatically selects the most frequently observed Sentinel-1 orbit and polarization configuration (VV/VH or single channel) to ensure geometric consistency.
 
 🧩 Script List
-Script	Description
+Script	Description   
 REACTIV_eventDetection	Detects new events using the Coefficient of Variation (CV) ratio between two temporal segments.  
 REACTIV_frozenBackground	Builds a “frozen” background by progressively excluding outliers until statistical stability is reached.  
 REACTIV_seasonal	Filters the time series to a given seasonal window (e.g., winter months) for cyclic change suppression.  
