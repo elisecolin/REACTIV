@@ -29,8 +29,8 @@ var str2 = '2025-01-01';    // 📅 End of the observation period (format: 'YY-M
 ==================================================================================
 */
 
-var str1='2020-01-01';     // Start of the Observation 'YY-MM-dd'
-var str2='2024-03-31';     // End of the Observation 'YY-MM-dd'
+var str1='2019-06-05';     // Start of the Observation 'YY-MM-dd'
+var str2='2025-07-01';     // End of the Observation 'YY-MM-dd'
 var croppalet=0.6 ; // Use a number <1 if you do not want the whole HSV palet. 
                     // croppalet=0.666 will produce Jet or Rainbow palet
 // ----------------------------------------------------------------------
@@ -49,6 +49,7 @@ var pos = Map.getCenter();
 // Load the Sentinel-1 ImageCollection centered on the location "pos"
 var sentinel1_liste = ee.ImageCollection('COPERNICUS/S1_GRD_FLOAT')
   .filterDate(startDate, endDate)
+//  .filter(ee.Filter.eq('relativeOrbitNumber_start', 129))
   .filterBounds(pos);
 
 
@@ -75,6 +76,42 @@ var acquisitionMode = sentinel1.aggregate_array('instrumentMode').distinct();
 var allPolarizations = sentinel1.aggregate_array('transmitterReceiverPolarisation');
 // Intersection of common polarimetric channels for all orbits
 print(allPolarizations)
+
+
+var polStrings = ee.List(allPolarizations).map(function (l) {
+  return ee.List(l).sort().join('_');        // ordre indifférent
+});
+var freqDict   = ee.Dictionary(polStrings.reduce(
+                     ee.Reducer.frequencyHistogram()));      // {'VV_VH':17, 'VV':5, ...}
+// Dictionnaire  ➜  FeatureCollection triable
+var fc = ee.FeatureCollection(freqDict.keys().map(function (k) {
+  k = ee.String(k);
+  return ee.Feature(null, {
+    'key'  : k,
+    'value': ee.Number(freqDict.get(k)),      // frequency → ee.Number
+    'len'  : ee.Number(k.split('_').size())   // 1 ou 2   → ee.Number
+  });
+}));
+// ------------------------------------------------------------------
+// Priority to couples if any
+// ------------------------------------------------------------------
+var maxLen    = ee.Number(fc.aggregate_max('len'));   
+var filteredFC = ee.FeatureCollection(
+                   ee.Algorithms.If(
+                     maxLen.gte(2),                   // ≥2 ⇒ at least one couple
+                     fc.filter(ee.Filter.eq('len', 2)),
+                     fc));                            
+var dominant = filteredFC.sort('value', false)        // descending order
+                         .first();                    // max frequency
+var dominantPolList = ee.String(dominant.get('key'))
+                        .split('_');                  // ['VV','VH'] ou ['VV']
+print('Polarisation dominant :', dominantPolList);
+
+
+
+
+
+
 var commonPolarizations = allPolarizations.iterate(function(list, intersection) {
   return ee.List(intersection).removeAll(ee.List(intersection).removeAll(ee.List(list)));
 }, allPolarizations.get(0));  // Initialize with the first list
@@ -84,6 +121,41 @@ var polar1 = ee.Algorithms.If(NumberOfChannels.gte(1), polarList.get(0), null);
 var polar2 = ee.Algorithms.If(NumberOfChannels.eq(2), polarList.get(1), null);
 var polar1 = ee.List([polar1]); 
 var polar2 = ee.List([polar2]); 
+
+
+var NumberOfChannels = dominantPolList.length();
+var polar1 = ee.Algorithms.If(NumberOfChannels.gte(1), dominantPolList.get(0), null);
+var polar2 = ee.Algorithms.If(NumberOfChannels.eq(2), dominantPolList.get(1), null);
+var polar1 = ee.List([polar1]); 
+var polar2 = ee.List([polar2]); 
+print('polar1',polar1,'polar2',polar2);
+
+
+
+
+
+var filterFirst = ee.Filter.listContains(
+      'transmitterReceiverPolarisation', dominantPolList.get(0));       // ex. 'VV' :contentReference[oaicite:1]{index=1}
+var filterSecond = ee.Algorithms.If(
+      NumberOfChannels.eq(2),
+      ee.Filter.listContains(
+        'transmitterReceiverPolarisation', dominantPolList.get(1)),     // ex. 'VH'
+      null);                                                            // sinon inutilisé
+var sentinel1 = ee.ImageCollection(
+  ee.Algorithms.If(
+    NumberOfChannels.eq(2),                           // Cas bipolaire
+    sentinel1.filter(ee.Filter.and(filterFirst, filterSecond)),
+    sentinel1.filter(filterFirst)          // Cas monopolaire
+  )
+);
+
+print('Collection restreinte :', sentinel1, sentinel1.size());
+
+
+
+
+
+
 
 
 
@@ -220,7 +292,7 @@ var stdmu=stdmu.divide(sizepile.sqrt()); // Theoretical std for Rayleigh Nakagam
 var magicnorm=magic.subtract(mu).divide(stdmu.multiply(10)).clamp(0,1);
 
 
-var rgb=ee.Image.cat(days.multiply(croppalet),magicnorm,imax.clamp(0,1)).hsvToRgb();
+var rgb=ee.Image.cat([days.multiply(croppalet),magicnorm,imax.clamp(0,1)]).hsvToRgb();
 Map.setOptions('satellite');
 var visparams = {min: [0, 0, 0],
                  max: [1, 1, 1],
