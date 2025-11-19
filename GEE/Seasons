@@ -40,10 +40,10 @@ Thame (Nepal) 27,912° de latitude Nord et 88,1956 latitude Est (88.1956 27.912 
 ==================================================================================
 */
 
-var str1='2018-01-01';     // Start of the Observation 'YY-MM-dd'
-var str2='2025-03-01';     // End of the Observation 'YY-MM-dd'
-var seasonStart = '11-01'; // Start of the season (November 16) 'MM-dd'
-var seasonEnd = '03-01';   // End of the season (January 3) 'MM-dd' 
+var str1='2018-07-01';     // Start of the Observation 'YY-MM-dd'
+var str2='2024-09-30';     // End of the Observation 'YY-MM-dd'
+var seasonStart = '03-01'; // Start of the season (November 16) 'MM-dd'
+var seasonEnd = '06-30';   // End of the season (January 3) 'MM-dd' 
 
 
 // ----------------------------------------------------------------------
