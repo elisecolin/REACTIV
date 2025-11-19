@@ -32,11 +32,14 @@ Change Detection. Remote Sens. 2020, 12, 1720. https://doi.org/10.3390/rs1211172
 // =========================================================================
 // 1. User parameters 
 // =========================================================================
-var str2='2023-07-01';     // End of the Observation 'YY-MM-dd'
+var str2='2025-07-01';     // End of the Observation 'YY-MM-dd'
 var durationMonths = 6;    // Duration of the time series ( in month)
 
 
-var mu_threshold = 0.2286;
+//var cv_threshold = 0.2286;
+var mu=0.2286; // Theoretical mean for Rayleigh Nakagam L=4.9
+var stdmu=0.1616;
+var cv_threshold = mu + stdmu;
 
 // -------------------------------------------------------------------------
 // COMPUTE COLLECTION
@@ -108,9 +111,11 @@ var Inew_linearVH = Inew.select('VH').sqrt().rename('VH');
 function convertToAmplitude(collection, polar) {
   return collection.select(polar).map(function(img) {
     return img.expression('sqrt(band)', { 'band': img.select(polar) })
-              .rename(polar);
+              .rename(polar)
+              .copyProperties(img, ['system:time_start', 'system:time_end']);
   });
 }
+
 
 // For comparison, compute the simple mean for each polarization
 var meanVV = convertToAmplitude(s1_1, 'VV').mean().rename('meanVV');
@@ -133,7 +138,7 @@ var meanVH = convertToAmplitude(s1_1, 'VH').mean().rename('meanVH');
 
 
 // Function to compute the frozen background for a given collection, threshold, and polarization.
-function computeFrozenBackground(collection, mu_threshold, polar) {
+function computeFrozenBackground(collection, cv_threshold, polar) {
   var amplitudeCollection = convertToAmplitude(collection, polar); // Convert the collection to amplitude 
   // Step 1: Convert the collection to a per-pixel sorted array
   var pixelValuesArray = amplitudeCollection.toArray().arraySort();
@@ -164,7 +169,7 @@ function computeFrozenBackground(collection, mu_threshold, polar) {
   // Convert the list of CV images into an ImageCollection then into a multi-band image
   var cumulativeCVImage = ee.ImageCollection.fromImages(cumulativeCV).toBands();
   // Create a boolean image: true where CV is less than the threshold
-  var belowThreshold = cumulativeCVImage.lt(mu_threshold);
+  var belowThreshold = cumulativeCVImage.lt(cv_threshold);
   
   // Step 3: Count the number of iterations (bands) where CV is below the threshold
   var countBelow = belowThreshold.toInt().reduce(ee.Reducer.sum()).rename('countBelow');
@@ -189,8 +194,8 @@ function computeFrozenBackground(collection, mu_threshold, polar) {
 
 
 // Compute the frozen background for both polarizations
-var frozenBackgroundVV = computeFrozenBackground(s1_1, mu_threshold, 'VV');
-var frozenBackgroundVH = computeFrozenBackground(s1_1, mu_threshold, 'VH');
+var frozenBackgroundVV = computeFrozenBackground(s1_1, cv_threshold, 'VV');
+var frozenBackgroundVH = computeFrozenBackground(s1_1, cv_threshold, 'VH');
 
 
 // =========================================================================
@@ -206,43 +211,136 @@ Map.addLayer(meanVV, {min: 0, max: 1}, 'Mean VV');
 Map.addLayer(frozenBackgroundVH, {min: 0, max: 1}, 'Frozen Background VH');
 Map.addLayer(meanVH, {min: 0, max: 1}, 'Mean VH');
 
-var rgbvv=ee.Image.cat(Inew_linearVV.max(frozenBackgroundVV),frozenBackgroundVV,frozenBackgroundVV)
-var rgbvh=ee.Image.cat(frozenBackgroundVH.multiply(3),frozenBackgroundVH.multiply(3),Inew_linearVH.max(frozenBackgroundVH).multiply(3))
+var rgbvv=ee.Image.cat([Inew_linearVV,frozenBackgroundVV,frozenBackgroundVV]);
+var rgbvv2=ee.Image.cat([Inew_linearVV,meanVV,meanVV]);
 
-var FBRpolar=ee.Image.cat(frozenBackgroundVV,frozenBackgroundVH.multiply(3),frozenBackgroundVH.divide(frozenBackgroundVV))
+var rgbvh=ee.Image.cat([frozenBackgroundVH.multiply(3),frozenBackgroundVH.multiply(3),Inew_linearVH.multiply(3)]);
+var rgbvh2=ee.Image.cat([meanVH.multiply(3),meanVH.multiply(3),Inew_linearVH.multiply(3)]);
 
-Map.addLayer(FBRpolar, visParams,'FBG in polarimetric colors');
+//var FBRpolar=ee.Image.cat([frozenBackgroundVV,frozenBackgroundVH.multiply(3),frozenBackgroundVH.divide(frozenBackgroundVV)]);
+//Map.addLayer(FBRpolar, visParams,'FBG in polarimetric colors');
 
-//Map.addLayer(rgbvv, visParams,'Detection from a FBG in VV');
-//Map.addLayer(rgbvh, visParams,'Detection from a FBG in VH');
+Map.addLayer(rgbvv, visParams,'Detection from a FBG in VV');
+Map.addLayer(rgbvv2, visParams,'Detection from a mean BG in VV');
+Map.addLayer(rgbvh, visParams,'Detection from a FBG in VH');
+Map.addLayer(rgbvh2, visParams,'Detection from a mean BG in VH');
 
 
 // =========================================================================
-// 5. Panel for time series PLOT 
+// 5. Interactive Panel for inspecting Frozen Background behavior
 // =========================================================================
 
+// Create a title label
+var title = ui.Label('🛰️ Click anywhere to inspect temporal and CV profiles');
+title.style().set('position', 'bottom-center');
+Map.add(title);
 
-// Create a panel to hold the chart.
+// Create a panel to hold charts
 var panel = ui.Panel();
 panel.style().set({
-  width: '400px',
+  width: '440px',
   position: 'bottom-right'
 });
 Map.add(panel);
 
-// Register a function to draw a chart when a user clicks on the map.
+// -------------------------------------------------------------------------
+// (1) Time-profile plot (VV / VH) + (2) CV cumulative profiles
+// -------------------------------------------------------------------------
 Map.onClick(function(coords) {
   panel.clear();
   var point = ee.Geometry.Point(coords.lon, coords.lat);
-  var chart2=ui.Chart.image.series(s1Collection.select('VV','VH'), point, null, 30)
-  .setChartType('ScatterChart')
-      .setOptions({
-      title: 'temporal profile',
-      hAxis: {title: 'Acquisition Date'},
-      vAxis: {title: 'Intensity Values (dB)'},
-      });
-  panel.add(chart2);
-});
+  print('Clicked coordinates:', point);
 
+  // ------------- (1) Temporal amplitude/intensity profiles -------------
+  var sentinel1 = s1_1.select(['VV','VH']);
+  
+  var chartAmp = ui.Chart.image.series({
+      imageCollection: sentinel1,
+      region: point,
+      reducer: ee.Reducer.mean(),
+      scale: 30
+    })
+    .setChartType('ScatterChart')
+    .setOptions({
+      title: 'Temporal Profile (VV & VH)',
+      hAxis: { title: 'Acquisition Date' },
+      vAxis: { title: 'Backscatter Intensity (linear)' },
+      pointSize: 3,
+      lineWidth: 1,
+      colors: ['#1f77b4', '#ff7f0e'],
+      legend: { position: 'bottom' }
+    });
+  panel.add(chartAmp);
+  
+  // ------------- (2) Cumulative CV(i) profile (computed from VV) -------------
+  var ampVV = s1_1.select('VV').map(function(img) {
+    return img.sqrt().rename('VV_amp');
+  });
+  var pixelValuesArray = ampVV.toArray().arraySort();
+  var indices = ee.List.sequence(1, ampVV.size());
 
+  var cumulativeCV = ee.ImageCollection.fromImages(indices.map(function(i) {
+    i = ee.Number(i);
+    var subArray = pixelValuesArray.arraySlice(0, 0, i.toInt());
+    var mean = subArray.arrayReduce(ee.Reducer.mean(), [0]);
+    var stdDev = subArray.arrayReduce(ee.Reducer.stdDev(), [0]);
+    var cv = stdDev.divide(mean);
+    var bandName = ee.String('CV_').cat(i.int().format());
+    return cv.arrayGet([0,0]).rename([bandName])
+             .set('system:time_start', ee.Date('2000-01-01').advance(i, 'day'));
+  }));
 
+  var chartCV = ui.Chart.image.series({
+    imageCollection: cumulativeCV,
+    region: point,
+    reducer: ee.Reducer.mean(),
+    scale: 10
+  }).setOptions({
+    title: 'Cumulative CV(i) Profile (VV)',
+    hAxis: {title: 'Index i (sorted amplitudes)'},
+    vAxis: {title: 'Coefficient of Variation'},
+    lineWidth: 2,
+    pointSize: 3,
+    colors: ['#2ca02c'],
+    legend: {position: 'none'}
+  });
+  panel.add(chartCV);
+  
+  // ------------- (3) Number of retained samples (CV < threshold) -------------
+  var cumulativeCVImage = ee.ImageCollection.fromImages(indices.map(function(i) {
+    i = ee.Number(i);
+    var subArray = pixelValuesArray.arraySlice(0, 0, i.toInt());
+    var mean = subArray.arrayReduce(ee.Reducer.mean(), [0]);
+    var stdDev = subArray.arrayReduce(ee.Reducer.stdDev(), [0]);
+    var cv = stdDev.divide(mean);
+    var bandName = ee.String('mask_').cat(i.int().format());
+    return cv.arrayGet([0, 0]).lt(cv_threshold).rename([bandName]);
+  })).toBands();
+
+  // Sum all “true” pixels (1 where CV < threshold)
+  var countBelow = cumulativeCVImage.toInt()
+    .reduce(ee.Reducer.sum())
+    .rename('countBelow');
+
+  // Extract value at clicked point using sample()
+  var retained = countBelow.sample({
+    region: point,
+    scale: 10,
+    numPixels: 1
+  }).first().get('countBelow');
+
+  // Display result
+  retained.evaluate(function(val) {
+    if (val !== null && !isNaN(val)) {
+      panel.add(ui.Label({
+        value: 'Samples retained for Frozen Background: ' + Math.round(val),
+        style: {fontWeight: 'bold', color: '#00796b'}
+      }));
+    } else {
+      panel.add(ui.Label({
+        value: '⚠️ No valid data for this point (check overlap or orbit).',
+        style: {color: '#b71c1c'}
+      }));
+    }
+  });
+}); // 👈 fermeture de Map.onClick
