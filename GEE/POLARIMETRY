@@ -34,8 +34,8 @@ var str2 = '2025-01-01';    // 📅 End of the observation period (format: 'YY-M
 // 1. User parameters 
 // =========================================================================
 
-var str1='2020-01-01';     // Start of the Observation 'YY-MM-dd'
-var str2='2024-12-31';     // End of the Observation 'YY-MM-dd'
+var str1='2024-01-01';     // Start of the Observation 'YY-MM-dd'
+var str2='2025-07-31';     // End of the Observation 'YY-MM-dd'
 var croppalet=0.66
 
 
@@ -141,6 +141,9 @@ var seriesPolar1 = SeriesPolar1.map(function(image) {
 var seriesPolar2 = SeriesPolar2.map(function(image) {
   return image.divide(meanPolar2);
 });
+//var seriesPolar2 = SeriesPolar2
+//var seriesPolar1 = SeriesPolar1
+
 var meanPolar1 = seriesPolar1.mean();
 var meanPolar2 = seriesPolar2.mean();
 
@@ -199,7 +202,6 @@ var magic=magic1.max(magic2);
 // =========================================================================
 // 4. Compute CLASSICAL REACTIV for Comparison
 // =========================================================================
-
 var imax1 = sentinel1.select(polar1).max();
 var imax2 = sentinel1.select(polar2).max();
 var imax=imax1.max(imax2);
@@ -241,7 +243,6 @@ var rgb=ee.Image.cat(days.multiply(croppalet),magicnorm,imax.clamp(0,1)).hsvToRg
 // =========================================================================
 
 
-Map.setOptions('satellite');
 var visparams = {min: [0, 0, 0],max: [1, 1, 1],gamma: 2};
 
 
@@ -255,8 +256,7 @@ Map.addLayer(magic2.clamp(0,0.5).divide(0.5).pow(2), {min: 0, max: 1, gamma: 1},
 
 Map.addLayer(rgb, visparams,'REACTIV Visualization');
 var rgbImage3 = ee.Image.cat(couchemin, couchemax, magic.clamp(0,0.75).divide(0.75))
-Map.addLayer(rgbImage3, {min: [0, 0, 0],max: [1, 1, 1],gamma: 0.5}, 'lmin lmax CVmax');
-
+Map.addLayer(rgbImage3, {min: [0, 0, 0],max: [1, 1, 1],gamma: 1}, 'lmin lmax CVmax');
 
 
 // =========================================================================
@@ -305,3 +305,4 @@ Map.onClick(function(coords) {
 
   panel.add(chart2);
 });
+
