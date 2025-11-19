@@ -1,64 +1,49 @@
-# REACTIV: Change Detection in SAR Time-Series
-
-## Introduction
-REACTIV is a collection of change detection algorithms applied to SAR (Synthetic Aperture Radar) time-series images. This project includes several implementations based on different scientific approaches to detect changes in various environments, such as urban areas, the cryosphere, and vegetation surfaces.
-
-## Installation
-Clone the Git repository by running the following command in a terminal:
-```bash
-git clone https://earthengine.googlesource.com/users/elisecolinaa/REACTIV
-```
-Users with access to the repository can add it to the Code Editor using: 
-```bash
-https://code.earthengine.google.com/?accept_repo=users/elisecolinaa/REACTIV
-```
-
-## Repository Contents
-The repository contains five main files, each corresponding to a specific implementation of the REACTIV algorithm:
-
-### 1. CLASSIC
-**Description:**
-The classic version of REACTIV, based on the coefficient of variation for change detection in SAR time-series of urban areas.
-
-**Reference:**
-Colin Koeniguer, E., & Nicolas, J. M. (2020). Change detection based on the coefficient of variation in SAR time-series of urban areas. *Remote Sensing, 12*(13), 2089. [DOI:10.3390/rs12132089](https://doi.org/10.3390/rs12132089)
+# 🌍 REACTIV – Google Earth Engine Scripts  
+**Large-scale SAR change detection and visualization framework**  
+*(Official GEE implementation for the paper: “REACTIV and Sentinel-1: Advances in Event-Based Alerts, Seasonal Adaptation, and Polarimetric Optimization for Large-Scale Change Detection”)*  
 
 ---
-### 2. FrozenBackGround
-**Description:**
-Reimplementation of the method for detecting ephemeral objects in SAR time-series using frozen background-based change detection.
 
-**Reference:**
-Taillade, T., Thirion-Lefevre, L., & Guinvarc’h, R. (2020). Detecting ephemeral objects in SAR time-series using frozen background-based change detection. *Remote Sensing, 12*(11), 1720. [DOI:10.3390/rs12111720](https://doi.org/10.3390/rs12111720)
+## 📖 Overview  
 
----
-### 3. NewEvent
-**Description:**
-This version detects changes occurring after a given time-series. Useful for monitoring the appearance of new events following a reference period.
+This folder contains the official **Google Earth Engine (GEE)** implementations of the four methodological extensions introduced in the paper.  
+Each script is designed for direct execution within the **GEE Code Editor**, enabling large-scale visualization and rapid prototyping of Sentinel-1 time-series analyses.  
 
----
-### 4. POLARIMETRY
-**Description:**
-Implementation of change detection based on the bounds of multivariate coefficients of variation, calculated in their literal formulation.
+The REACTIV framework relies on the **Coefficient of Variation (CV)** as a simple yet robust descriptor of temporal dynamics in SAR backscatter.  
+The extensions presented here enhance REACTIV’s interpretability and adaptability for different applications:  
 
-**Reference:**
-Colin, E., & Ossikovski, R. (2024). Towards a Unified Formalism of Multivariate coefficients of Variation: Application to analyzing polarimetric speckle time series. *Journal of the Indian Society of Remote Sensing, 52*(12), 2625-2636.
+| Extension | Purpose | Example Applications |
+|------------|----------|----------------------|
+| **Event-Based Detection (CV Ratio)** | Isolate newly occurring changes by comparing recent and historical temporal windows | Urban growth, ship detection, construction sites |
+| **Frozen Background (Stable Reference)** | Build a temporally stable background by iteratively removing anomalies | Port activity, forest clearing, flood aftermath |
+| **Seasonal Adaptation** | Restrict analysis to stable seasonal periods to filter cyclic natural variations | Agricultural monitoring, glacier dynamics |
+| **Polarimetric Extension (MCV)** | Exploit multivariate CV across polarization channels to enhance weak-signal discrimination | Maritime surveillance, glacial and cryospheric studies |
 
 ---
-### 5. Seasons
-**Description:**
-A version that computes time-series by restricting them to a given season.
-- Useful for the cryosphere to exclude snowfall periods and changes in the snow cover.
-- Relevant for vegetation to eliminate seasonal changes that could distort the detection of anthropogenic or environmental changes.
 
-## Usage
-Each file can be executed independently based on user requirements. Specific dependencies and execution parameters are described in each source file.
+## ⚙️ Installation and Usage  
 
-## Contribution
-Contributions are welcome! Please submit a pull request or open an issue for any suggestions or improvements.
+1. Open [**Google Earth Engine Code Editor**](https://code.earthengine.google.com/).  
+2. Copy the desired script into your personal GEE workspace.  
+3. Adjust the user parameters at the top of the script:  
 
-# License
-This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0).
-You are free to share and adapt this work for *non-commercial* purposes, provided that you give appropriate credit.
-For more details, see the full license here: CC BY-NC 4.0: https://creativecommons.org/licenses/by-nc/4.0/
+   ```javascript
+   var str2 = '2025-07-01';   // End date of the observation period
+   var durationMonths = 6;    // Duration of the time series (months)
+   var geometry = Map.getCenter(); // Area of interest
 
+4. Run the script to generate REACTIV composites and detection layers.
+
+5. Use the interactive chart panel (click on the map) to explore temporal amplitude profiles and cumulative CV behavior at any location.
+
+Each script automatically selects the most frequently observed Sentinel-1 orbit and polarization configuration (VV/VH or single channel) to ensure geometric consistency.
+
+🧩 Script List
+Script	Description
+REACTIV_eventDetection	Detects new events using the Coefficient of Variation (CV) ratio between two temporal segments.
+REACTIV_frozenBackground	Builds a “frozen” background by progressively excluding outliers until statistical stability is reached.
+REACTIV_seasonal	Filters the time series to a given seasonal window (e.g., winter months) for cyclic change suppression.
+REACTIV_polarimetric	Implements the Multivariate Coefficient of Variation (MCV) for dual-polarization Sentinel-1 datasets.
+   
+   var durationMonths = 6;    // Duration of the time series (months)
+   var geometry = Map.getCenter(); // Area of interest
