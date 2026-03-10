@@ -173,32 +173,51 @@ def _pixel_generalized_limits(series_pixel):
 # PARALLEL GENERALIZED LIMITS
 # ============================================================
 
-def CV_Generalized_Limits(series, n_jobs=None):
-
+def CV_Generalized_Limits(series):
     p = len(series)
-
     Nt, nx, ny = series[0].shape
+    Npix = nx * ny
+    # stack
+    S = np.stack(series).astype(np.float64)
+    # reshape spatial
+    S = S.reshape(p, Nt, Npix)
+    # clean data
+    S = np.nan_to_num(S, nan=0.0, posinf=0.0, neginf=0.0)
+    # mean
+    mu = np.mean(S, axis=1)
+    normMU = np.linalg.norm(mu, axis=0)
+    normMU = np.maximum(normMU, EPS)
+    # center data
+    S_centered = S - mu[:, None, :]
+    S_centered = np.nan_to_num(S_centered)
+    # covariance
+    C = np.einsum('ptk,qtk->pqk', S_centered, S_centered) / Nt
+    # reshape
+    C = np.transpose(C, (2,0,1))
+    # regularisation
+    C += np.eye(p)[None,:,:] * 1e-8
+    # remove invalid values
+    C = np.nan_to_num(C)
+    # eigenvalues
+    try:
+        eigvals = np.linalg.eigvalsh(C)
+    except np.linalg.LinAlgError:
+        # fallback safer solver
+        eigvals = np.linalg.eigvals(C).real
 
-    if n_jobs is None:
-        n_jobs = multiprocessing.cpu_count()
+    eigvals = np.maximum(eigvals,0)
 
-    pixels = []
+    lam_min = eigvals[:,0]
+    lam_max = eigvals[:,-1]
 
-    for x in range(nx):
-        for y in range(ny):
+    limitmin = np.sqrt(lam_min) / normMU
+    limitmax = np.sqrt(lam_max) / normMU
 
-            pixel_series = [[series[i][t, x, y] for t in range(Nt)] for i in range(p)]
+    limitmin = limitmin.reshape(nx,ny)
+    limitmax = limitmax.reshape(nx,ny)
 
-            pixels.append(pixel_series)
-
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(_pixel_generalized_limits)(pix) for pix in pixels
-    )
-
-    results = np.array(results)
-
-    limitmin = results[:, 0].reshape(nx, ny)
-    limitmax = results[:, 1].reshape(nx, ny)
+    limitmin = np.nan_to_num(limitmin)
+    limitmax = np.nan_to_num(limitmax)
 
     return limitmin, limitmax
 
