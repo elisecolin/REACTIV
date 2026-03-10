@@ -1,8 +1,8 @@
 import numpy as np
 from scipy.special import gamma
 from matplotlib.colors import hsv_to_rgb
-from joblib import Parallel, delayed
-import multiprocessing
+
+
 
 # ============================================================
 # GLOBAL UTILITIES
@@ -134,39 +134,6 @@ def fusion2polar4reactiv(CV1, K1, A1, CV2, K2, A2):
     A = A1 + A2
 
     return clean_array(CV), clean_array(K), clean_array(A)
-
-
-# ============================================================
-# GENERALIZED CV CORE
-# ============================================================
-
-def _pixel_generalized_limits(series_pixel):
-
-    X = np.array(series_pixel)
-
-    if not np.isfinite(X).all():
-        return 0, 0
-
-    C = covariance_matrix(X)
-
-    mu = np.mean(X, axis=1)
-
-    normMU = np.linalg.norm(mu)
-
-    if normMU < EPS:
-        return 0, 0
-
-    eigvals = np.linalg.eigvalsh(C)
-
-    eigvals = np.maximum(eigvals, 0)
-
-    lam_min = eigvals[0]
-    lam_max = eigvals[-1]
-
-    limitmin = np.sqrt(lam_min) / normMU
-    limitmax = np.sqrt(lam_max) / normMU
-
-    return limitmin, limitmax
 
 
 # ============================================================
