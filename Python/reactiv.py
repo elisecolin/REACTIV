@@ -361,12 +361,21 @@ def CV_Generalized_Limits(series):
             pixel_series = np.array([[series[i][t, x, y] for t in range(Nt)] for i in range(p)])
             # Calculate the covariance matrix for this pixel series
             cov_matrix = np.cov(pixel_series)*(Nt-1)/Nt
+
+            if not np.isfinite(cov_matrix).all():
+                continue
+
             mu=np.mean(pixel_series,axis=1)
             normMU=np.linalg.norm(mu)
-            # Calculate the eigenvalues and store them
-            eigenvalues, _ = np.linalg.eig(cov_matrix)
-            limitmin_per_pixel[x, y] = np.sqrt(np.min(eigenvalues))/normMU
-            limitmax_per_pixel[x, y] = np.sqrt(np.max(eigenvalues))/normMU
+            if normMU == 0:
+                continue
+            eigenvalues = np.linalg.eigvalsh(cov_matrix)
+            eigenvalues = np.maximum(eigenvalues,0)
+
+            limitmin_per_pixel[x,y] = np.sqrt(np.min(eigenvalues))/normMU
+            limitmax_per_pixel[x,y] = np.sqrt(np.max(eigenvalues))/normMU
+
+    
     # Construct the eigenimages from the eigenvalues
     # eigenimages = [eigenvalues_per_pixel[:, :, i] for i in range(p)]
     return limitmin_per_pixel,limitmax_per_pixel
