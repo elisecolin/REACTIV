@@ -86,7 +86,7 @@ def Stack2reactiv(Stack, timeaxis=2, L=None):
     num = (L*gamma(L)**4*(4*(L**2)*gamma(L)**2 - 4*L*gamma(L+0.5)**2 - gamma(L+0.5)**2))
     den = (gamma(L+0.5)**4*(L*gamma(L)**2 - gamma(L+0.5)**2))
 
-    Rstd = 0.25 * num / den / np.sqrt(Nt)
+    Rstd = np.sqrt(0.25 * num / den / Nt)
 
     Rmax = Rmean + Rstd
 
