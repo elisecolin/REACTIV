@@ -86,7 +86,7 @@ def Stack2reactiv(Stack, timeaxis=2, L=None):
     Rmean = np.sqrt((L * gamma(L)**2 / (gamma(L + 0.5)**2)) - 1)  # theoretical mean value
     num = (L * gamma(L)**4 * (4 * (L**2) * gamma(L)**2 - 4 * L * gamma(L + 1/2)**2 - gamma(L + 1/2)**2))
     den = (gamma(L + 1/2)**4 * (L * gamma(L)**2 - gamma(L + 1/2)**2))
-    Rstd = 1 / 4 * num / den / np.sqrt(Nt)  # theoretical standard deviation value
+    Rstd = np.sqrt(0.25 * num / den / Nt)  # theoretical standard deviation value
     Rmax = Rmean + Rstd
 
     # Recast Coefficient of Variation between 0 (mean value) and 1 (max value)
@@ -190,7 +190,7 @@ def List2reactiv(List,L=None):
     Rmean=np.sqrt((L*gamma(L)**2/(gamma(L+0.5)**2))-1); # theretical mean value
     num=(L*gamma(L)**4.*(4*(L**2)*gamma(L)**2-4*L*gamma(L+1/2)**2-gamma(L+1/2)**2));
     den=(gamma(L+1/2)**4.*(L*gamma(L)**2-gamma(L+1/2)**2));
-    Rstd=1/4*num/den/np.sqrt(Nt); # theoretical standard deviation value
+    Rstd = np.sqrt(0.25 * num / den / Nt); # theoretical standard deviation value
     Rmax=Rmean+Rstd
 
 # recast Coefficient of Variation between 0 (mean value) and 1 (max value)    
